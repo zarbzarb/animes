@@ -1,8 +1,14 @@
 # =============================================================
 # 多智能体动漫追番推荐系统 —— Python 依赖
 # 建议 Python 3.10 / 3.11（PyTorch 生态兼容性最好）
-# 安装：pip install -r requirements.txt
-# 版本区间为「经验可用区间」，锁死版本请用 pip freeze > requirements.lock
+# 本机实际使用的环境：conda env `py3_11`，路径 E:\tools\anaconda\envs\py3_11
+#
+# 安装顺序（两步，别合并）：
+#   1) pip install --index-url https://download.pytorch.org/whl/cu130 torch==2.14.0+cu130
+#   2) pip install -r requirements.txt
+# 第 1 步不能省也不能换成默认源 —— 原因见下面「深度学习」段的注释。
+#
+# 版本区间为「经验可用区间」，用于复现的精确版本见 requirements.lock（pip freeze 产物）。
 # =============================================================
 
 # ---------- Web 服务 ----------
@@ -19,8 +25,21 @@ langchain-core>=0.2
 openai>=1.30          # 统一 OpenAI 兼容客户端（DashScope / DeepSeek / Ollama 均可用）
 
 # ---------- 深度学习 ----------
-torch>=2.1,<2.6
-numpy>=1.24,<2.0
+# ⚠️ torch 刻意不写进本文件的「直接安装」路径。
+#    PyPI 默认源上的 torch 是 +cpu 轮子，装完 import 得到 torch.cuda.is_available()==False，
+#    不会报错、只是悄悄用不上 GPU（本项目已经踩过一次）。请单独执行下面这条命令：
+#
+#        pip install --index-url https://download.pytorch.org/whl/cu130 torch==2.14.0+cu130
+#
+#    已验证组合（2026-09-12 实测）：Windows 11 Build 26200 / RTX 2060 6GB (Turing sm_75)
+#        / 驱动 32.0.16.1692（支持 CUDA 13）/ torch 2.14.0+cu130 / Python 3.11
+#    装完必须自检：
+#        python -c "import torch;print(torch.__version__, torch.cuda.is_available())"
+#        期望输出：2.14.0+cu130 True
+#
+#    约束登记（供 requirements.lock 与文档引用）：
+#        torch == 2.14.0+cu130
+numpy>=2.0,<3.0        # 实装 2.4.6；旧约束写的 <2.0 与 torch 2.14 生态不符
 transformers>=4.40,<5.0
 tokenizers>=0.19
 safetensors>=0.4
