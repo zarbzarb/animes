@@ -49,6 +49,7 @@ __all__ = [
     "PAD_ITEM",
     "TARGET_SLOTS",
     "SlidingWindowDataset",
+    "WindowBatchIterator",
     "make_padded_id_array",
     "build_eval_inputs",
     "count_windows",
@@ -291,19 +292,59 @@ class SlidingWindowDataset(Dataset):
         x, target = self._window(index)
         return torch.from_numpy(x), torch.tensor(target, dtype=torch.long)
 
-    def __getitems__(self, indices):
-        """批量取样本（PyTorch DataLoader 在 batch 内会优先走这个入口）。
+    # ------------------------------------------------------------------
+    # 批量取数（训练用的快路径）
+    # ------------------------------------------------------------------
+    def get_batch(self, indices):
+        """批量取样本，**一次成型**为两个张量：`(x [B, cap], y [B])`。
 
-        批量走一次向量化 `searchsorted`，比逐个 `__getitem__` 少 255 次二分，
-        在 256 的 batch 下实测能省掉可观的 Python 开销。
+        为什么要有这个方法（而不是直接用 DataLoader）
+        ----------------------------------------------
+        实测（RTX 2060 / bs=1024 / 6,533 用户档位）：
+
+        | 路径 | 每 batch 取数 | 吞吐 |
+        |---|---|---|
+        | `DataLoader(num_workers=0)` | 17.1 ms | 59,738 samples/s |
+        | 只调 `__getitems__`（跳过 collate） | 10.6 ms | 96,248 samples/s |
+        | `get_batch()`（本方法） | ~5 ms | 见 `logs/` 实测 |
+
+        差异来自两处：
+
+        1. `default_collate` 会对 1024 个样本**逐个建 tensor 再 stack**，
+           约 6.5 ms/batch 的纯开销；
+        2. `__getitems__` 按契约要返回 `list[(x, y)]`，即 2048 个张量对象。
+
+        本方法直接构造 `(B, cap)` 的 numpy 矩阵，只在最后做**一次**
+        `torch.from_numpy`。训练循环因此改用 `WindowBatchIterator`。
+
+        ⚠️ 多进程（`num_workers>0`）在本项目**不可用**：Windows 用 spawn
+        启动 worker，会把 dataset 持有的序列整体 pickle 过去。实测
+        `num_workers=4` 让 15 个 step 从 3.6s 变成 55.6s（慢 15 倍）。
+        这条约束写在 `configs/model.yaml` 的 `train.num_workers` 注释里。
+
+        返回的 `int64` 是 `nn.Embedding` 要求的索引类型，直接 `.to(device)` 即可。
         """
         idx = np.asarray(indices, dtype=np.int64).reshape(-1)
+        b = int(idx.size)
+        x = np.full((b, self.input_cap), self.pad_value, dtype=np.int64)
+        y = np.empty(b, dtype=np.int64)
+        if b == 0:
+            return torch.from_numpy(x), torch.from_numpy(y)
+
+        # 越界校验放在向量化之前：否则会崩在 `self.seqs[ks[j]]` 上，
+        # 报出来是 "list index out of range"，看不出是窗口号的问题。
+        lo, hi = int(idx.min()), int(idx.max())
+        if lo < 0 or hi >= self.n_windows:
+            raise IndexError(
+                f"窗口号越界：应在 [0, {self.n_windows})，实际 [{lo}, {hi}]")
+
+        # 一次二分定位全部样本的 (用户, t)
         ks = np.searchsorted(self.offsets, idx, side="right") - 1
         ts = idx - self.offsets[ks]
 
-        out_x = np.full((idx.size, self.input_cap), self.pad_value, dtype=np.int64)
-        out_y = np.empty(idx.size, dtype=np.int64)
-        for j in range(idx.size):
+        # 下面这个循环无法再向量化：每个样本的序列长度与切片起点都不同，
+        # 只能逐个切片。单样本约 4~5 微秒，1024 的 batch 约 5 ms。
+        for j in range(b):
             seq = self.seqs[int(ks[j])]
             t = int(ts[j])
             start = t - self.input_cap
@@ -311,10 +352,21 @@ class SlidingWindowDataset(Dataset):
                 start = 0
             prefix = seq[start:t]
             if prefix:
-                out_x[j, self.input_cap - len(prefix):] = prefix
-            out_y[j] = int(seq[t])
-        return [(torch.from_numpy(out_x[j]), torch.tensor(int(out_y[j]), dtype=torch.long))
-                for j in range(idx.size)]
+                x[j, self.input_cap - len(prefix):] = prefix
+            y[j] = seq[t]
+        return torch.from_numpy(x), torch.from_numpy(y)
+
+    def __getitems__(self, indices):
+        """PyTorch DataLoader 的批量入口（保留以兼容默认 collate）。
+
+        内部复用 `get_batch()`，**逻辑只有一份**；这里只是把它拆成
+        `list[(x, y)]` 以维持 DataLoader 期望的契约
+        （`tests/test_sasrec/test_dataset.py` 锁定了这个契约）。
+
+        训练路径不用它 —— 直接 `get_batch()` 更快，理由见上。
+        """
+        x, y = self.get_batch(indices)
+        return [(x[j], y[j]) for j in range(x.size(0))]
 
     # ------------------------------------------------------------------
     # 诊断
@@ -333,6 +385,88 @@ class SlidingWindowDataset(Dataset):
             "max_train_len": int(self.lens.max()) if self.lens.size else 0,
             "truncated_users": int((self.lens > self.input_cap).sum()),
         }
+
+
+# =====================================================================
+# 训练用的批迭代器
+# =====================================================================
+class WindowBatchIterator:
+    """按 batch 遍历 `SlidingWindowDataset`，直接产出**已批量化的张量**。
+
+    与 `torch.utils.data.DataLoader` 的关系
+    ---------------------------------------
+    这是一个**替代品**，不是包装。两者产出完全相同的东西
+    （`(input_ids [B, cap] int64, targets [B] int64)`），
+    所以 `models/sasrec/train.py::fit()` 不需要知道自己拿的是哪一个
+    （它只用 `len()` 与迭代协议）。
+
+    为什么不用 DataLoader：
+
+    1. **多进程在本机不可用**。Windows 用 spawn 启动 worker，
+       dataset 持有的序列会被整体 pickle 到每个 worker；
+       实测 `num_workers=4` 让 15 个 step 从 3.6s 变成 55.6s（慢 15 倍）。
+    2. **单进程下 collate 有固定开销**。`default_collate` 逐个样本建 tensor
+       再 stack，实测 6.5 ms/batch（1024 的 batch），占纯计算时间的 20%+。
+       本类走 `dataset.get_batch()`，每 batch 取数从 17.1ms 降到约 5ms。
+
+    打乱口径
+    --------
+    `shuffle=True` 时每个 epoch 用 `seed + epoch` 生成一个 `torch.randperm`。
+    与 `DataLoader(generator=...)` 的语义一致：**同 seed 可复现，
+    不同 epoch 不重复**。这一点很重要 —— 论文里 `main` 档的 3 个种子要报
+    均值±标准差，若每个 epoch 的打乱方式不可复现，方差里就混进了噪声。
+
+    用法
+    ----
+    >>> it = WindowBatchIterator(ds, batch_size=1024, shuffle=True, seed=42)
+    >>> len(it)                      # 批数（ceil）
+    10669
+    >>> x, y = next(iter(it))        # 每个元素都是张量
+    >>> x.shape, y.shape
+    (torch.Size([1024, 48]), torch.Size([1024]))
+    """
+
+    def __init__(self, dataset: "SlidingWindowDataset", batch_size: int,
+                 shuffle: bool = True, seed: int = 0, drop_last: bool = False):
+        if int(batch_size) <= 0:
+            raise ValueError(f"batch_size 必须为正，收到 {batch_size}")
+        self.dataset = dataset
+        self.batch_size = int(batch_size)
+        self.shuffle = bool(shuffle)
+        self.seed = int(seed)
+        self.drop_last = bool(drop_last)
+        # 记录已产生过多少个 epoch：让每轮的打乱种子不同。
+        # 放在 __iter__ 里自增，因此**重复迭代同一个对象**才会推进轮次，
+        # 而"从头再遍历一次"（for 循环重新调用 __iter__）正好对应一个 epoch。
+        self._epoch = 0
+
+    def __len__(self) -> int:
+        n = len(self.dataset)
+        if self.drop_last:
+            return n // self.batch_size
+        return (n + self.batch_size - 1) // self.batch_size
+
+    def __iter__(self):
+        n = len(self.dataset)
+        if n == 0:
+            return
+        if self.shuffle:
+            # torch.randperm 比 np.random.default_rng().permutation 快得多
+            # （1,092 万个窗口时约 0.3s vs 1s+）。
+            # ⚠️ 已知代价：full 档（1.09 亿窗口）时这个索引数组本身要
+            # 872MB，且打乱耗时数秒。若要跑 full 档再考虑"分块打乱"。
+            g = torch.Generator().manual_seed(self.seed + self._epoch)
+            idx = torch.randperm(n, generator=g).numpy()
+        else:
+            idx = np.arange(n, dtype=np.int64)
+        self._epoch += 1
+
+        bs = self.batch_size
+        last_start = (len(idx) // bs) * bs
+        for s in range(0, last_start, bs):
+            yield self.dataset.get_batch(idx[s:s + bs])
+        if not self.drop_last and last_start < len(idx):
+            yield self.dataset.get_batch(idx[last_start:])
 
 
 # =====================================================================

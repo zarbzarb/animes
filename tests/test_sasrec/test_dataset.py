@@ -21,6 +21,7 @@ from models.sasrec.dataset import (
     PAD_ITEM,
     TARGET_SLOTS,
     SlidingWindowDataset,
+    WindowBatchIterator,
     build_eval_inputs,
     count_windows,
     make_padded_id_array,
@@ -363,3 +364,138 @@ def test_make_padded_id_array_handles_empty_and_bad_cap():
     except ValueError:
         return
     raise AssertionError("cap<=0 应当抛 ValueError")
+
+
+# =====================================================================
+# 8. 批量取数快路径（get_batch / WindowBatchIterator）
+# =====================================================================
+def test_get_batch_matches_single_item_calls():
+    """`get_batch` 是训练用的快路径，必须与逐个 `__getitem__` **逐位一致**。
+
+    快路径一旦与慢路径有语义差异（例如少填一个 PAD、t 差一位），
+    训练出来的结果和验收脚本对不上，而且很难看出是哪一层的问题。
+    """
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    idx = [0, 3, 5, 13, 17, 8]
+    xb, yb = ds.get_batch(idx)
+    assert xb.shape == (len(idx), CAP)
+    assert yb.shape == (len(idx),)
+    assert xb.dtype == torch.long and yb.dtype == torch.long
+    for j, i in enumerate(idx):
+        x_s, y_s = ds[i]
+        assert torch.equal(xb[j], x_s)
+        assert int(yb[j]) == int(y_s)
+
+
+def test_get_batch_preserves_index_order():
+    """批内顺序必须与传入的 index 顺序一致 —— 负采样依赖 target 与行的对应。"""
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    idx = [5, 1, 9, 2]
+    _, yb = ds.get_batch(idx)
+    for j, i in enumerate(idx):
+        assert int(yb[j]) == int(ds[i][1])
+
+
+def test_get_batch_empty_returns_empty_tensors():
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    xb, yb = ds.get_batch([])
+    assert xb.shape == (0, CAP) and yb.shape == (0,)
+
+
+def test_get_batch_rejects_out_of_range_index():
+    """越界必须报出**窗口号**，而不是含糊的 list index out of range。"""
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    try:
+        ds.get_batch([0, len(ds)])
+    except IndexError as e:
+        assert "窗口号越界" in str(e)
+        return
+    raise AssertionError("越界索引应当抛 IndexError")
+
+
+def test_window_batch_iterator_length():
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    n = len(ds)
+    assert len(WindowBatchIterator(ds, batch_size=7, shuffle=False)) \
+        == (n + 6) // 7
+    assert len(WindowBatchIterator(ds, batch_size=7, shuffle=False,
+                                   drop_last=True)) == n // 7
+
+
+def test_window_batch_iterator_covers_all_windows_exactly_once():
+    """一个 epoch 必须**不重不漏**地覆盖每个窗口。
+
+    漏样本会让 epoch 变"虚短"（loss 曲线看着更抖）；
+    重复样本等于偷偷加大某些样本的权重。两者都不报错。
+    """
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    it = WindowBatchIterator(ds, batch_size=4, shuffle=True, seed=0)
+    seen = []
+    for x, y in it:
+        assert x.shape[1] == CAP
+        seen.extend(y.tolist())
+    expect = [int(ds[i][1]) for i in range(len(ds))]
+    assert sorted(seen) == sorted(expect)
+    assert len(seen) == len(ds)
+
+
+def test_window_batch_iterator_shuffle_is_reproducible_per_seed():
+    """同一 seed 构造的两个迭代器，第 1 个 epoch 的批内容必须逐位相同。"""
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+
+    def first_epoch(seed):
+        out = []
+        for x, y in WindowBatchIterator(ds, batch_size=5, shuffle=True, seed=seed):
+            out.append(y.tolist())
+        return out
+
+    assert first_epoch(42) == first_epoch(42)
+    assert first_epoch(42) != first_epoch(43)
+
+
+def test_window_batch_iterator_shuffles_differently_per_epoch():
+    """同一个迭代器连续两次遍历（= 两个 epoch）顺序必须不同。
+
+    否则每轮看到的数据顺序完全一样，shuffle 形同虚设，
+    且会让 loss 曲线异常平滑、掩盖过拟合。
+    """
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    it = WindowBatchIterator(ds, batch_size=5, shuffle=True, seed=0)
+    e1 = [y.tolist() for _, y in it]
+    e2 = [y.tolist() for _, y in it]
+    # 每个 epoch 仍是同一批窗口（不重不漏），只是顺序不同
+    assert sorted(sum(e1, [])) == sorted(sum(e2, []))
+    assert e1 != e2
+
+
+def test_window_batch_iterator_matches_dataloader_without_shuffle():
+    """`shuffle=False` 时，与 torch DataLoader 的产出必须逐位一致。
+
+    这条保证"换掉 DataLoader"没有引入语义变化 —— 否则 M2.3 验收时
+    用 DataLoader 跑出的结论不适用于新的训练路径。
+    """
+    from torch.utils.data import DataLoader
+
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    dl = DataLoader(ds, batch_size=5, shuffle=False, num_workers=0)
+
+    from_dl = [(x.tolist(), y.tolist()) for x, y in dl]
+    from_it = [(x.tolist(), y.tolist())
+               for x, y in WindowBatchIterator(ds, batch_size=5, shuffle=False)]
+    assert from_dl == from_it
+
+
+def test_window_batch_iterator_iterator_protocol_works_in_for_loop():
+    """能被 `for` 直接迭代（`fit()` 依赖的只是 len() + 迭代协议）。"""
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    it = WindowBatchIterator(ds, batch_size=10, shuffle=False)
+    assert sum(1 for _ in it) == len(it)
+
+
+def test_window_batch_iterator_rejects_bad_batch_size():
+    ds = SlidingWindowDataset(_seqs(), max_seq_len=MAX_SEQ_LEN)
+    try:
+        WindowBatchIterator(ds, batch_size=0)
+    except ValueError:
+        return
+    raise AssertionError("batch_size<=0 应当抛 ValueError")
