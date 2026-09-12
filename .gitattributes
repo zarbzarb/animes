@@ -1,0 +1,32 @@
+# 统一换行符，避免 Windows/Linux 协作时的整文件 diff 噪音
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.pt   binary
+*.pth  binary
+*.pkl  binary
+*.npy  binary
+*.dat  binary
+*.ckpt binary
+*.onnx binary
+
+# 显式声明语言类型（GitHub 语法高亮）
+*.py    text diff=python
+*.md    text diff=markdown
+*.yaml  text
+*.yml   text
+*.json  text
+*.sql   text
+*.sh    text eol=lf
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+
+# 锁文件与生成物不计入语言统计
+package-lock.json linguist-generated=true
+pnpm-lock.yaml    linguist-generated=true

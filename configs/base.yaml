@@ -1,0 +1,105 @@
+# =============================================================
+# 公共配置（所有环境共享）—— configs/base.yaml
+# 加载顺序：base.yaml → {APP_ENV}.yaml → 任务配置（如 model.yaml）
+# 后者覆盖前者。详见 docs/config-guide.md 第 1 节
+# =============================================================
+
+project:
+  name: anirec
+  version: 0.1.0
+  root: .
+
+paths:
+  data_dir: ./dataset
+  processed_dir: ./data/processed
+  feature_dir: ./data/features
+  checkpoint_dir: ./data/checkpoints
+  log_dir: ./logs
+  experiment_dir: ./experiments
+
+# ---------- 算法超参基线（消融实验的 base，改动必须记录）----------
+model:
+  max_seq_len: 50
+  hidden_size: 64
+  num_layers: 2
+  num_heads: 2
+  dropout: 0.2
+  num_interests: 4          # K，多兴趣胶囊数
+  routing_iters: 3          # 动态路由迭代次数
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.0
+  epochs: 200
+  early_stop_patience: 10
+  neg_sample_num: 100       # 评估负采样数，改动会使指标不可比
+  device: cuda
+  seed: 42
+
+# ---------- 内容编码 ----------
+content:
+  encoder: distilbert-base-multilingual-cased
+  vec_dim: 512
+  pooling: cls
+  normalize: true
+  batch_size: 256
+
+# ---------- 融合与冷启动 ----------
+fusion:
+  w_behavior: 0.7           # 行为分权重
+  w_content: 0.3            # 内容分权重（两者之和必须 = 1.0）
+  w_content_cold: 0.5       # 冷启动时内容分提权
+  cold_start_threshold: 10  # 交互数 < 该值视为新番（与数据集口径一致）
+  diversity_lambda: 0.7     # MMR 多样性重排
+  dedup_window_days: 7
+  top_n: 20
+
+# ---------- 题材体系（12 类）----------
+genres:
+  - { id: 1,  name_cn: 热血战斗,   name_en: Action }
+  - { id: 2,  name_cn: 冒险奇幻,   name_en: Adventure-Fantasy }
+  - { id: 3,  name_cn: 日常治愈,   name_en: Slice-of-Life }
+  - { id: 4,  name_cn: 恋爱校园,   name_en: Romance }
+  - { id: 5,  name_cn: 悬疑推理,   name_en: Mystery }
+  - { id: 6,  name_cn: 科幻机战,   name_en: Sci-Fi }
+  - { id: 7,  name_cn: 喜剧搞笑,   name_en: Comedy }
+  - { id: 8,  name_cn: 运动竞技,   name_en: Sports }
+  - { id: 9,  name_cn: 超自然灵异, name_en: Supernatural }
+  - { id: 10, name_cn: 剧情文艺,   name_en: Drama }
+  - { id: 11, name_cn: 青春音乐,   name_en: Music-Idol }
+  - { id: 12, name_cn: 后宫福利,   name_en: Ecchi-Harem }
+
+# 不合规题材：不进入推荐池
+forbidden_genres:
+  - Hentai
+  - Erotica
+
+# ---------- Agent 链路 ----------
+agents:
+  transport: local            # local | http
+  max_depth: 6                # 调用链最大深度，超限判定循环
+  timeouts_ms:
+    A0: 800
+    A1: 150
+    A2: 200
+    A3: 150
+    A4: 100
+    A5: 200
+    A6: 2000
+    A7: 5000
+  circuit:
+    failure_threshold: 5
+    open_seconds: 30
+    half_open_probes: 3
+    success_threshold: 2
+  chat:
+    max_tool_calls: 3         # A7 单轮工具调用上限
+    history_turns: 10         # 会话记忆保留轮数
+    session_ttl: 1800         # 会话记忆 TTL（秒）
+
+# ---------- 缓存 Key TTL ----------
+cache:
+  rec_ttl: 86400              # rec:{uid}
+  new_anime_ttl: 604800       # rec:new:{uid}
+  profile_ttl: 3600           # profile:{uid}
+  session_ttl: 1800           # mem:short:{uid}:{sid}
+  dedup_ttl: 604800           # mem:dedup:{uid}

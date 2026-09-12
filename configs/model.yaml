@@ -1,0 +1,61 @@
+# =============================================================
+# 模型与训练配置 —— configs/model.yaml
+# 用法：python scripts/train.py --config configs/model.yaml
+# 超参以 configs/base.yaml 的 model 段为基线，此处可覆盖
+# ⚠️ 改动任何超参后必须重跑受影响实验，详见 docs/dev-conventions.md
+# =============================================================
+
+experiment_name: multi_interest_content_v1
+
+model:
+  name: MultiInterestSASRec
+  use_multi_interest: true       # M1 多兴趣胶囊
+  use_content_fusion: true       # M2 内容融合
+  max_seq_len: 50
+  hidden_size: 64
+  num_layers: 2
+  num_heads: 2
+  dropout: 0.2
+  num_interests: 4               # K=4
+  routing_iters: 3
+  shared_item_emb: true          # 胶囊与基座共享物品嵌入
+
+content_fusion:
+  candidate_side: true           # 候选侧：拼接内容向量后降维回 hidden_size
+  ranking_side: true             # 排序侧：7:3 加权
+  w_behavior: 0.7
+  w_content: 0.3
+  w_content_cold: 0.5
+  cold_start_threshold: 10
+
+train:
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.0
+  optimizer: adam
+  loss: bce                     # 二元交叉熵 + 负采样
+  epochs: 200
+  early_stop_patience: 10
+  early_stop_metric: ndcg@10
+  grad_clip_norm: 5.0
+  grad_accum_steps: 1
+  num_workers: 4
+  device: cuda
+  seed: 42
+
+eval:
+  protocol: leave_one_out_neg100  # 1 正 + 100 负
+  ks: [5, 10]
+  metrics: [hr, ndcg, mrr]
+  # 分题材与冷启动由 scripts/run_experiments.py 单独触发
+
+checkpoint:
+  save_dir: ./data/checkpoints
+  save_best_only: true
+  monitor: ndcg@10
+  mode: max
+
+logging:
+  log_every_n_steps: 50
+  log_capsule_similarity: true   # 记录胶囊两两余弦相似度（检测塌缩）
+  tensorboard: false

@@ -1,0 +1,65 @@
+# =============================================================
+# 数据预处理参数 —— configs/data.yaml
+# 用法：python scripts/preprocess.py --config configs/data.yaml
+# 口径必须与 docs/evaluation-plan.md 第 2 节一致
+# =============================================================
+
+input:
+  anime_meta: ./dataset/animes.csv
+  ratings: ./dataset/ratings.csv
+  genre_map: ./dataset/id_to_genreids.json
+  dataset_pkl: ./dataset/dataset.pkl
+  neg_sample_pkl: ./dataset/random-sample_size100-seed98765.pkl
+  pretrained_bert: ./dataset/pretrained_bert.pth
+
+output:
+  processed_dir: ./data/processed
+  feature_dir: ./data/features
+  sequence_file: seq_dataset.pkl
+  content_vec_file: content_vec_512.npy
+  faiss_index_file: faiss.index
+  item_emb_file: item_emb.npy
+
+# ---------- 过滤规则 ----------
+filter:
+  min_user_interactions: 5     # 交互数 < 5 的用户剔除
+  min_item_interactions: 10    # 交互数 < 10 的物品剔除
+  drop_forbidden_genres: true  # 剔除 Hentai / Erotica
+  min_year: 1960               # 过滤异常年份
+  require_valid_rating: true   # rating 为空则丢弃
+
+# ---------- 序列构造 ----------
+sequence:
+  max_len: 50                  # 最大序列长度（与模型一致）
+  split: leave_one_out         # 留一法：倒数1=test, 倒数2=val, 其余=train
+  sort_by: timestamp           # 按时间戳升序
+  pad_value: 0
+  min_seq_len: 5               # 序列长度不足则丢弃该用户
+
+# ---------- 负采样 ----------
+negative_sampling:
+  num_negatives: 100           # 每用户负样本数
+  seed: 98765
+  strategy: random             # random（与现有 neg_sample_pkl 口径一致）
+  exclude_positive: true
+  exclude_train_items: true
+
+# ---------- 内容特征 ----------
+content_feature:
+  text_fields: [title, genres_cn, summary]   # 拼接顺序
+  max_text_len: 160
+  vec_dim: 512
+  batch_size: 256
+  normalize: true
+
+# ---------- 冷启动子集 ----------
+cold_start:
+  threshold: 10                # 交互数 < 10 视为新番
+  require_absent_in_train: true  # 训练集中必须不可见（否则实验无效）
+  min_test_samples: 5000       # 目标样本量下限，不足则告警
+  output: cold_start_subset.pkl
+
+# ---------- 分题材子集 ----------
+by_genre:
+  primary_genre_only: true     # 按 is_primary 题材分组
+  min_samples_per_genre: 200   # 单题材样本不足则报告中标注
