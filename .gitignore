@@ -50,6 +50,9 @@ celerybeat-schedule
 *.sqlite3
 *.db
 
+# 变异测试脚本的临时备份（正常情况下脚本会自行删除；异常中断时残留，勿入库）
+*.mutation-backup
+
 # ===== 前端 =====
 node_modules/
 frontend/dist/
