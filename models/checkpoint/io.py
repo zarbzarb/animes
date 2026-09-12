@@ -159,20 +159,32 @@ def load_model_from_checkpoint(
             raise ValueError(
                 "checkpoint 的 meta 里没有 model_config，无法自动重建模型；"
                 "请显式传入已构造的 model")
-        # 局部导入：避免 checkpoint 子包在 import 时就依赖 sasrec，
-        # 将来 baselines 的 checkpoint 复用本模块时不会被迫拉起 SASRec。
-        from models.sasrec.config import SASRecConfig
-        from models.sasrec.model import SASRec
 
-        if "n_items" not in cfg_dict:
-            raise ValueError(
-                "checkpoint 的 model_config 里没有 n_items，无法重建模型")
-        # 用 from_dict 而不是 SASRecConfig(**cfg_dict)：结构快照里包含
-        # `input_cap` / `n_params` 这类**派生/诊断字段**，它们不是构造参数，
-        # 直接展开会 TypeError。from_dict 只取 dataclass 认得的字段，
-        # 这样将来往快照里加诊断量也不会让旧权重变得读不了。
-        model = SASRec(SASRecConfig.from_dict(
-            cfg_dict, n_items=int(cfg_dict["n_items"])))
+        # 局部导入：避免 checkpoint 子包在 import 时就依赖具体模型包，
+        # 将来 baselines 的 checkpoint 复用本模块时不会被迫拉起全部模型。
+        if cfg_dict.get("arch") == "multi_interest":
+            from models.multi_interest.config import MultiInterestConfig
+            from models.multi_interest.model import MultiInterestSASRec
+
+            if "n_items" not in cfg_dict:
+                raise ValueError(
+                    "checkpoint 的 model_config 里没有 n_items，无法重建模型")
+            model = MultiInterestSASRec(MultiInterestConfig.from_dict(
+                cfg_dict, n_items=int(cfg_dict["n_items"])))
+        else:
+            # 旧 checkpoint 没有 arch 字段，一律按 SASRec 兜底
+            from models.sasrec.config import SASRecConfig
+            from models.sasrec.model import SASRec
+
+            if "n_items" not in cfg_dict:
+                raise ValueError(
+                    "checkpoint 的 model_config 里没有 n_items，无法重建模型")
+            # 用 from_dict 而不是 SASRecConfig(**cfg_dict)：结构快照里包含
+            # `input_cap` / `n_params` 这类**派生/诊断字段**，它们不是构造参数，
+            # 直接展开会 TypeError。from_dict 只取 dataclass 认得的字段，
+            # 这样将来往快照里加诊断量也不会让旧权重变得读不了。
+            model = SASRec(SASRecConfig.from_dict(
+                cfg_dict, n_items=int(cfg_dict["n_items"])))
 
     load_state_into(model, payload)
     return model, meta
