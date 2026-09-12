@@ -5,9 +5,10 @@
 #
 # ⚠️ 本文件【不写训练规模】。每个实验组用哪个档位由下面的 scale 字段指定，
 #    档位定义（user_ratio / seeds / max_epochs / 评估频率）见 configs/scale.yaml。
-#    原因：本机为 RTX 2060 6GB、纯本地无云算力，若全量跑完整个矩阵，
-#    训练次数约 230 次、总时长为「年」量级，毕设无法完成。
-#    分档 + 结果复用后可压到约 15 次训练。
+#    原因：本机为 RTX 2060 6GB、纯本地无云算力。按原始全量设计，训练次数约 230 次，
+#    早期按 RTX 3090 估算是「年」量级，毕设无法完成。
+#    分档 + 结果复用 + AMP 后压到约 26 次训练；M2.0 实测（bs2048+AMP）后，
+#    整个矩阵保守口径（跑满 max_epochs）约 1.66 天，实测表见 docs/progress.md §5。
 # =============================================================
 
 output_dir: ./experiments
@@ -25,12 +26,14 @@ base:
   num_layers: 2
   num_heads: 2
   dropout: 0.2
-  batch_size: 256
+  batch_size: 1024         # M2.0 实测甜点；增幅见 configs/model.yaml 的 throughput 段
   lr: 0.001
   epochs: 200              # 仅作上限，实际由档位的 max_epochs 收紧
   early_stop_patience: 10
-  neg_sample_num: 100
-  amp: true                # 混合精度，说明见 configs/model.yaml
+  neg_sample_num: 100      # 【评估】1 正 + 100 负；改动会使全部指标不可比
+  train_negatives_per_position: 1   # 【训练】每位置负样本数，SASRec 原论文口径。
+                           # 与上面的 100 是【两件事】，不要混（详见 model.yaml 的 train 段）
+  amp: true                # 混合精度；⚠️ 仅在 batch>=512 时才有收益
 
 # ---------- E1 整体效果对比 ----------
 E1_overall:
@@ -103,7 +106,7 @@ HPO:
     num_heads: [1, 2, 4]
     dropout: [0.1, 0.2, 0.3, 0.5]
     lr: [0.0001, 0.0005, 0.001, 0.003]
-    batch_size: [128, 256, 512]
+    batch_size: [512, 1024, 2048]   # 实测 bs>=512 才有吞吐优势，128/256 无收益且更慢
     num_interests: [2, 4, 6, 8]
   strategy: coarse_to_fine       # 先粗网格定范围，再细搜
 

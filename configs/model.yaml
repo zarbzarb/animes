@@ -35,21 +35,54 @@ content_fusion:
   cold_start_threshold: 10
 
 train:
-  batch_size: 256
-  lr: 0.001
+  batch_size: 1024              # M2.0 实测甜点；显存占用仅 1.19 GB / 6 GB。
+                                # 吞吐最优其实是 2048（再高 10%），但 batch 越大
+                                # 学习率越需要重标定，故取 1024 作默认起点。
+  lr: 0.001                     # ⚠️ 该值是 batch=256 的经典配置，batch 放大后需重标定：
+                                #    M2.4 在 dev 档对比 {0.001, 0.002, 0.004} + warmup 后定稿
   weight_decay: 0.0
   optimizer: adam
   loss: bce                     # 二元交叉熵 + 负采样
+  negatives_per_position: 1     # 【训练侧】每位置负样本数，SASRec 原论文口径
+                                # ⚠️ 与 eval 的 100 负样本是【两件事】，别混：
+                                #    评估恒为 1 正 + 100 负（口径固定，改则指标不可比）；
+                                #    训练侧实测从 1 增到 100 只慢 26%（主开销在序列编码器），
+                                #    故"多采样负样本"不是提速手段，"缩短序列"才是。
   epochs: 200                   # 仅作上限；实际由 configs/scale.yaml 的 max_epochs 收紧
   early_stop_patience: 10
   early_stop_metric: ndcg@10
   grad_clip_norm: 5.0
   grad_accum_steps: 1
-  num_workers: 8                # 本机 16 逻辑核；4 个 worker 喂不满单卡，实测后可继续上调
+  num_workers: 8                # 本机 16 逻辑核
   device: cuda
   seed: 42                      # 单次训练的默认种子；多种子由 scale.yaml 的 seeds 列表驱动
-  amp: true                     # 混合精度：RTX 2060 为 Turing 架构，有 FP16 Tensor Core
-  amp_dtype: fp16               # 预期提速 1.5~2x；若出现 loss NaN / 梯度溢出再回退 fp32
+  amp: true                     # 混合精度：RTX 2060（sm_75）有 FP16 Tensor Core
+  amp_dtype: fp16               # ⚠️ 必须与足够大的 batch 搭配使用：实测 bs=128/256 时
+                                #    AMP 反而【变慢】（0.80x / 0.91x，kernel 启动开销
+                                #    盖过收益），bs>=512 才转正，bs=1024 达 1.48x。
+                                #    若出现 loss NaN / 梯度溢出再回退 fp32。
+
+# ---------- 实测吞吐（M2.0，RTX 2060 6GB / torch 2.14.0+cu130）----------
+# 重跑：python scripts/bench_throughput.py --batch-sizes 512 1024 2048 \
+#          --train-negatives 1
+# 数字为「纯计算」吞吐，不含 DataLoader 取数开销（该部分由 M2.3 的 Dataset 单独测）。
+throughput:
+  measured_at: "2026-09-12"
+  raw_artifact: logs/bench_throughput.json    # 本地产物（logs/ 不入库，重跑即复现）
+  train_samples_per_sec: 40083  # @ batch 2048 + AMP + 训练候选 2（1 正 1 负）
+  infer_samples_per_sec: 98088  # 纯前向，评估候选 101
+  best_batch_size: 2048
+  recommended_batch_size: 1024  # 吞吐只低 10%，训练动态更易控制
+  peak_mem_gb: 2.36             # bs2048/AMP/neg1；6GB 卡余量充足
+  mfu_percent: 6.2              # 算力利用率。瓶颈是 kernel 启动与小矩阵，
+                                # 不是 FLOPs —— 所以换更大 batch 才有收益，加卡同理
+  amp_speedup_at_1024: 1.48
+  note: |
+    序列编码器（因果自注意力，O(L^2)）是主要开销，候选集大小只占小头：
+    训练候选 2 / 11 / 101 → 39,344 / 32,555 / 31,171 samples/s（仅差 26%）。
+    推论：想再提速应走「缩短序列/按批动态填充」，而不是缩减候选。
+    batch 4096 会因显存触顶（5.46 GB）性能崩塌到 5,220 samples/s（慢 7 倍），
+    不要使用。
 
 eval:
   protocol: leave_one_out_neg100  # 1 正 + 100 负
