@@ -276,10 +276,33 @@ configs/
 ├── test.yaml              # 测试覆盖
 ├── prod.yaml              # 生产覆盖
 ├── data.yaml              # 数据预处理参数
-├── model.yaml             # 模型超参
-├── experiment.yaml        # 实验分组（E1-E4）
+├── model.yaml             # 模型超参与训练循环参数
+├── scale.yaml             # 训练规模档位（user_ratio / seeds / epoch 上限 / 评估频率）
+├── genre_taxonomy.yaml    # 12 类题材体系的单一事实源
+├── experiment.yaml        # 实验分组（E1-E4），并指定每组使用哪个档位
 └── log.yaml               # 日志格式与轮转
 ```
+
+**`scale.yaml` 与 `model.yaml` 的职责边界（重要）**：
+
+| 文件 | 管什么 | 是否影响模型结构 |
+|---|---|---|
+| `scale.yaml` | 训练**规模**：抽多少用户、跑几个种子、epoch 上限、多久评估一次 | ❌ 不影响 |
+| `model.yaml` | 模型**结构与训练超参**：hidden_size / num_layers / batch_size / lr / AMP | ✅ 影响 |
+
+两者分开的原因是：**超参不随规模变化**。这样小档（`dev`）调出的超参可以直接拿到大档（`main`）使用。
+若把 `user_ratio` 和 `hidden_size` 写进同一个文件，换档时很容易顺手改错超参，
+导致跨档结果不可比 —— 而"小档调参、大档直接用"正是本项目压缩训练时间的核心策略。
+
+使用方式：
+
+```bash
+python scripts/train.py --config configs/model.yaml --scale dev     # 开发档：HPO / 消融
+python scripts/train.py --config configs/model.yaml --scale main    # 论文主表
+```
+
+`--scale` 的优先级高于 `model.yaml` 里的 `scale` 默认值。
+档位设计理由、抽样口径与算力预算见 `evaluation-plan.md` §6.6。
 
 加载方式：
 

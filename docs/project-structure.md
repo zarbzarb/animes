@@ -167,6 +167,8 @@ models/
 │   ├── metrics.py             #   HR@K / NDCG@K / Recall@K / MRR
 │   ├── evaluator.py           #   评估循环（全量 / 分题材 / 冷启动子集）
 │   └── README.md
+├── data/                      # 训练集切分与子集选择
+│   └── user_subset.py         #   确定性嵌套用户抽样（训练档位的实现基础）
 └── checkpoint/                # 模型保存/加载工具（state_dict 规范）
 ```
 
