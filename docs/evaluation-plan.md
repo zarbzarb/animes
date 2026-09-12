@@ -50,6 +50,19 @@
 **结论：`dataset.pkl` 由 `ratings.npy` 口径构建（集合复现率 100%），本项目一律以 `ratings.npy` 为权威交互源。**
 依据可复现：运行 `python scripts/diagnose_dataset_source.py`，结论落盘于 `data/processed/dataset_source_verdict.json`。
 
+#### ⚠️ `ratings.npy` 存在重复评分行（去重规则必须写进论文）
+
+实测发现**同一 `(userID, animeID)` 在 `ratings.npy` 中出现多行**：
+抽样 300 个用户中有 **16 户**存在重复（共 **541 条冗余行**），
+其中 **1 户**出现跨 7 分冲突（同一物品既有 `7` 也有 `<7` 的评分行）。
+
+`dataset.pkl` 采用的是**逐行判定**口径——只要该物品存在**任一行** `rating >= 7`，
+即计入该用户的正样本（不是「取最后一行」、也不是「取平均」）。这一点已用
+`scripts/verify_stage1.py` 的 C 组检查固定下来：若误用 last-value 语义，该用户会少 1 个物品。
+
+> 影响范围：这是清洗章节必须披露的细节。若后续自行重建数据集，
+> 去重规则应写成「按 `(user, anime)` 取 max(rating)」，与官方切分保持一致。
+
 #### ⚠️ `pretrained_bert.pth` 的真实身份
 
 文档早期版本把它写成 DistilBERT 权重，**这是错的**。实际检查其 state_dict：
@@ -273,6 +286,79 @@ seq = [x for x in user_seq if x not in strip]
 
 > E3 必须**单独训练一次模型**（用剥离后的训练集），不能复用 E1/E2 的权重，
 > 否则「新番不可见」的前提不成立。
+
+---
+
+### 2.6 阶段一产物的验收方式
+
+阶段一产物（`data/processed/`、`data/features/`）体积大且不入库，无法靠「看文件」验收；
+也不应只信 `*_report.json`——**报告是产物，本身可能写错**。因此专门提供了独立检验器：
+
+```bash
+python scripts/verify_stage1.py              # 快速档，跑 A~F 共 31 项，约 40 秒
+python scripts/verify_stage1.py --full       # 追加 G 段权威源比对，共 33 项，约 2 分钟
+python scripts/verify_stage1.py --sample-users 500   # 加大抽样用户数（更稳但更慢）
+```
+
+`verify_stage1.py` 的核心原则是**独立重算**：它不把任何 `*_report.json` 当作依据，
+而是回到 `dataset/` 与 `configs/` 原始文件重新推导每一条结论，再与产物比对。
+所以「报告写错」或「产物与代码不一致」都会在这里暴露。
+
+检查覆盖七组：快速档 31 项（A~F），加 `--full` 后 33 项（含 G）。
+最近一次运行 2026-09-12：快速档 **31/31 通过，耗时 40 秒**；`--full` **33/33 通过，耗时 122 秒**。
+
+| 组 | 检查内容 | 关键判据 |
+|---|---|---|
+| A | 产物完整性 | 15 个文件存在且非空（合计约 625 MB）；不齐则直接退出 |
+| B | 序列数据集结构 | 用户 1,306,691 / 物品 15,687；**输出 pkl 与官方切分逐键一致（抽 2,000 用户）**；每用户正样本数 >= 10 |
+| C | 交互口径 | 全量扫描 `ratings.npy` 独立复现：正样本阈值 = 7（逐项比对）；正样本>=10 的用户 1,306,705 ≈ 1,306,691；物品恰 15,687；重复评分按「任一行 >= 7」的逐行口径 |
+| D | 题材与合规 | 池内仍含 1,551 个 Hentai/Erotica 物品；12 类题材每类非空 |
+| E | 内容向量 | 形状 (15687, 512) / (20237, 512)；L2 归一化；**池内矩阵与全量矩阵按 anime_id 精确对齐**；无空行 |
+| F | 时序与冷启动 | `ratings.csv` 无时间戳列；holdout 新番集合 == {year>=2021} ∩ 池；负样本仅取自新番；训练集内物品最少出现 6 次（无严格冷启动） |
+| G | 权威源口径（仅 `--full`） | `ratings.npy` 集合复现率 100%，`ratings.csv` 明显偏低（300 用户抽样 95.0%）——证明必须用 npy |
+
+结构化结果落盘 `data/processed/stage1_acceptance.json`，可直接贴入论文附录。
+退出码 `0` = 全部通过，`1` = 存在失败项，可直接接入 CI。
+
+> 注意：B 组的「与官方切分逐键一致」是**回归护栏**——任何后续改动若误改
+> `train/val/test`，会立即 FAIL。验收标准的口径常量集中在脚本顶部 `EXPECT` 字典，
+> 改口径必须同步本文件。
+
+### 2.7 阶段一脚本执行顺序
+
+阶段一共 6 个脚本（1 条主链路 + 1 个一次性下载 + 1 个取证器 + 1 个验收器），
+依赖关系如下。**顺序不可随意调换**：`build_content_vectors.py` 与
+`build_cold_start_subset.py` 都依赖 `preprocess.py` 的产物，跑在它前面会直接报错；
+而只重跑后者而不重跑前者，会得到「内容向量与物品集合对不上」的静默错误。
+
+| # | 脚本 | 依赖 | 产物 | 性质 |
+|---|---|---|---|---|
+| ① | `preprocess.py` | `dataset/` 原始文件 + `configs/` | `data/processed/` 7 个文件 | **必须最先** |
+| ② | `download_content_encoder.py` | 无（联网） | `models/content_encoder/pretrained/` | 一次性，权重已存在则跳过 |
+| ③ | `build_content_vectors.py` | ① 的 `anime_meta` / `anime_detailed_tags` | `data/features/` 内容向量 | 与 ④ 独立 |
+| ④ | `build_cold_start_subset.py` | ① 的 `item_stats` / `seq_dataset` | `cold_start_*.pkl/npy/json` | 与 ③ 独立 |
+| ⑤ | `diagnose_dataset_source.py` | 仅 `dataset/` 原始文件 | `dataset_source_verdict.json` | 与 ① 无依赖，可随时跑 |
+| ⑥ | `verify_stage1.py` | ①③④⑤ 的全部产物 | `stage1_acceptance.json` | **必须最后** |
+
+为此提供了固化顺序的一键执行器（已内置前置检查与产物检查，顺序跑错会明确报出应先跑哪一步）：
+
+```bash
+python scripts/run_stage1.py                 # 缺什么跑什么；产物已存在的步骤自动跳过
+python scripts/run_stage1.py --dry-run       # 只打印将执行的命令与跳过理由
+python scripts/run_stage1.py --force         # 忽略「产物已存在」，全部重跑
+python scripts/run_stage1.py --from content  # 从 ③ 开始（前面已完成的跳过）
+python scripts/run_stage1.py --only verify --verify-full
+python scripts/run_stage1.py --list          # 列出步骤、依赖、产物与当前状态
+```
+
+> 完全重跑一次全流水线（`.gitignore` 已排除产物，新克隆仓库必须全跑）的顺序即 ①→⑥；
+> 日常开发通常只需 ⑥，约 40 秒。
+
+> **工作目录无关**：以上命令（含单独执行某一个脚本）在**任意目录**下结果一致。
+> `configs/*.yaml` 里的相对路径在读取配置时会被锚定到项目根，因此
+> `cd F:/pj && python scripts/preprocess.py` 与
+> `python F:/pj/scripts/preprocess.py`（在别的目录下）完全等价。
+> 新增脚本必须遵守该约定，见 `docs/dev-conventions.md` 第 3.0 节。
 
 ---
 

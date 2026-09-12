@@ -702,12 +702,22 @@ def offline_recommend_batch(batch_id: str):
 
 ```bash
 # ---------- Step 0. 离线数据准备（阶段一产物，与数据库无关）----------
+# 一键执行（推荐）：固化顺序 + 前置检查 + 产物检查；顺序跑错会提示应先跑哪一步
+python scripts/run_stage1.py
+
+# 等价的逐步执行（顺序不可调换：③④ 都依赖 ① 的产物）
+# ① 清洗 + 序列构造（必须最先）
 python scripts/preprocess.py                 # -> data/processed/{seq_dataset.pkl, *_stats.parquet, *_report.json}
-python scripts/download_content_encoder.py   # -> models/content_encoder/pretrained/（约 520MB，不入库）
+# ② 内容编码器权重（一次性，已存在则跳过；约 520MB，不入库）
+python scripts/download_content_encoder.py   # -> models/content_encoder/pretrained/
+# ③ 内容向量（依赖 ①）
 python scripts/build_content_vectors.py --dim 512 --reduce pca   # -> data/features/content_vec_512*.npy
+# ④ 冷启动子集（依赖 ①）
 python scripts/build_cold_start_subset.py --mode holdout --min-year 2021
-# 口径存疑时的取证脚本（可随时重跑，结论落盘）
+# ⑤ 口径存疑时的取证脚本（只读 dataset/，与 ① 无依赖，可随时重跑）
 python scripts/diagnose_dataset_source.py    # -> data/processed/dataset_source_verdict.json
+# ⑥ 验收（必须最后，依赖 ①③④⑤ 全部产物；退出码 0=全过）
+python scripts/verify_stage1.py --full       # -> data/processed/stage1_acceptance.json
 
 # ---------- Step 1. 建库建表 + 初始化 12 类题材 + 10 个 Agent 状态 ----------
 python scripts/init_db.py --create-schema --seed-genre --seed-agent

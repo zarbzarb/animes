@@ -149,6 +149,32 @@ Refs: #8
 
 ## 三、代码规范
 
+### 3.0 路径与工作目录（硬约束）
+
+**所有 `scripts/` 下的脚本必须与「当前工作目录」无关**，在任何目录下启动结果一致。
+
+- 配置里的路径一律写作**相对项目根**的形式（`./dataset/animes.csv`、`./data/processed`）。
+- 脚本读配置后必须把这些相对路径**锚定到项目根**，再交给 `open` / `pandas` / `numpy`。
+  参考实现：`scripts/preprocess.py` 的 `anchor_paths()` + `load_cfg()`。
+- 只有**真正是路径**的字段才锚定。`output.sequence_file`、`content_vec_file`
+  这类是**文件名**，之后还要与 `processed_dir` / `feature_dir` 做 `join`，
+  锚定会破坏它们。
+- 脚本内部定位项目根统一用
+  `ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))`，
+  禁止依赖 `os.getcwd()` 或裸相对路径。
+- 命令行参数（`--config` / `--out` 等）按同一约定解释：相对路径视为相对项目根。
+
+**反例（阶段一真实踩过的坑）**：`build_anime_meta()` 曾把 `cfg["input"]["anime_meta"]`
+直接交给 `pd.read_csv`，于是
+
+```bash
+cd F:/pj && python scripts/preprocess.py          # ✅ 能跑
+python F:/pj/scripts/preprocess.py                # ❌ FileNotFoundError: './dataset/animes.csv'
+```
+
+只有在项目根目录下才碰巧能跑 —— 这类 bug 在 CI、IDE「运行」按钮、
+任务计划里都会复现。新增脚本请直接用 `anchor_paths()`。
+
 ### 3.1 Python
 
 **格式化与检查工具**：`ruff`（lint + format）+ `black`（备选）+ `pre-commit`

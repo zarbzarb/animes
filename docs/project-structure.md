@@ -296,7 +296,7 @@ frontend/
 | 目录 | 内容 | 约定 |
 |---|---|---|
 | `configs/` | `data.yaml` / `model.yaml` / `experiment.yaml` / `log.yaml` | 一个 `configs/config.py` 负责加载合并，支持 `--config` 覆盖 |
-| `scripts/` | `preprocess.py`、`train.py`、`run_experiments.py`、`plot_results.py`、`init_db.py`、`import_anime_meta.py`、`build_content_vectors.py`、`check_imports.py` | **可重复执行**（幂等）；每个脚本顶部必须有 docstring 说明用法 |
+| `scripts/` | **离线数据**：`preprocess.py`、`diagnose_dataset_source.py`、`build_content_vectors.py`、`download_content_encoder.py`、`build_cold_start_subset.py`；**算法**：`train.py`、`run_experiments.py`、`plot_results.py`；**工程**：`init_db.py`、`import_anime_meta.py`、`check_imports.py`；**验收/编排**：`verify_stage1.py`、`run_stage1.py` | **可重复执行**（幂等）；每个脚本顶部必须有 docstring 说明用法。`verify_stage1.py` 是阶段一产物的独立检验器（不读报告、只重算），退出码可直接接 CI；`run_stage1.py` 固化阶段一 6 个脚本的执行顺序（前置检查 + 产物检查），顺序跑错会明确提示应先跑哪一步 |
 | `tests/` | `test_models/`、`test_agents/`、`test_api/`、`test_metrics/` | 指标与 Agent 契约必须有测试；覆盖率目标 60% |
 | `deploy/` | `Dockerfile`、`docker-compose.yml`、`nginx.conf` | 定时任务容器与 API 容器分离 |
 | `data/` | `raw/` `processed/` `features/` `checkpoints/` | 全部不入库；路径由 `.env` 控制 |

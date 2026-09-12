@@ -55,21 +55,26 @@ f = open(OUT, "w", encoding="utf-8")
 
 
 def w(*a, **kw):
+    """同时写日志文件（人类可读全文）。结构化结论在文件末尾单独落 JSON。"""
     kw.setdefault("flush", True)
     print(*a, file=f, **kw)
 
 
+# ---- 读官方切分：smap(anime_id->idx) / umap(userID->idx) / train,val,test ----
+# 后面所有比对都以它为准：能不能复现 dataset.pkl，就是判定口径对错的唯一标准。
 with open(os.path.join(ROOT, "dataset", "dataset.pkl"), "rb") as fh:
     ds = pickle.load(fh)
 smap, umap = ds["smap"], ds["umap"]
 inv = {v: k for k, v in smap.items()}
 
-# 随机抽 N 个用户
+# 随机抽 N 个用户（种子固定 0，保证每次跑证据一致；人数可由 --users 调）
 rng = np.random.default_rng(0)
 pool = np.array(list(umap.keys()))
 uids = set(int(x) for x in rng.choice(pool, size=_args.users, replace=False))
 
-# 从 csv 收集
+# ---- 从 ratings.csv 收集这批用户的行 ----
+# csv 没有索引，只能顺序读完全部 1.48 亿行，用 uids 做流式过滤（约 1 分钟）。
+# 注意：不在这里做「同一 (用户,物品) 只留一行」的去重 —— 重建时要按逐行口径（见 recon）。
 csv_rows = defaultdict(list)
 with open(os.path.join(ROOT, "dataset", "ratings.csv"), encoding="utf-8") as fh:
     rd = csv.reader(fh)
@@ -82,7 +87,8 @@ with open(os.path.join(ROOT, "dataset", "ratings.csv"), encoding="utf-8") as fh:
         if u in uids:
             csv_rows[u].append((int(row[1]), int(row[2])))
 
-# 从 npy 收集
+# ---- 从 ratings.npy 收集同一批用户的行 ----
+# mmap + 分块扫描：2000 万行一块，用 np.isin 一次筛出这批用户，避免逐行 Python 判断。
 npy_rows = defaultdict(list)
 arr = np.load(os.path.join(ROOT, "dataset", "ratings.npy"), mmap_mode="r")
 CH = 20_000_000
@@ -98,16 +104,25 @@ w(f"抽样 {len(uids)} 用户; csv 收集 {sum(len(v) for v in csv_rows.values()
 
 
 def recon(rows, thr=7):
+    """用原始评分行重建「该用户的物品列表」。
+
+    口径要点（实测得出）：
+      · 阈值 thr=7：只要有一行 rating >= 7 就算正样本（**逐行判定**，不是取最后一行）
+      · 只保留在 smap 里的物品：未入池的物品本来就不在 dataset.pkl 里
+    """
     return [a for a, r in rows if r >= thr and a in smap]
 
 
 def pkl_items(u):
+    """取 dataset.pkl 里该用户的全部物品（train+val+test 拼起来，再翻译回 anime_id）。"""
     i = umap[u]
     return [inv[x] for x in (ds["train"][i] + ds["val"][i] + ds["test"][i])]
 
 
-stat = {"csv": [0, 0], "npy": [0, 0]}  # [集合一致, 顺序一致]
-set_bad_users = []
+# ---- 核心比对：csv / npy 各自能复现多少个用户 ----
+# stat[name] = [集合一致的用户数, 顺序也完全一致的用户数]
+stat = {"csv": [0, 0], "npy": [0, 0]}
+set_bad_users = []      # csv 复现失败的用户，后面逐一剖析原因
 for u in uids:
     p = pkl_items(u)
     for name, rows in (("csv", csv_rows), ("npy", npy_rows)):
@@ -119,6 +134,8 @@ for u in uids:
         if name == "csv" and set(c) != set(p):
             set_bad_users.append((u, c, p))
 
+# ---- 结论 1：谁复现得更好 ----
+# 预期 npy 集合一致 100%，csv 明显偏低；顺序一致率两边都只有 ~60%（无时间戳，复现不了）
 w("\n" + "=" * 70)
 for k, v in stat.items():
     w(f"  {k}: 集合一致 {v[0]}/{len(uids)} ({v[0]/len(uids):.1%})   顺序一致 {v[1]}/{len(uids)} ({v[1]/len(uids):.1%})")
@@ -126,6 +143,8 @@ for k, v in stat.items():
 w("\n" + "=" * 70)
 w(f"集合不一致用户数: {len(set_bad_users)}   逐一剖析前 6 个")
 w("=" * 70)
+# 对每个失败用户，把「csv 多出来的 / 少掉的」物品列出来，
+# 并回查这些物品在 csv 和 npy 里各自的评分 —— 差异模式会直接暴露原因（+1 偏移）。
 for u, c, p in set_bad_users[:6]:
     only_c = sorted(set(c) - set(p))
     only_p = sorted(set(p) - set(c))
@@ -142,6 +161,7 @@ for u, c, p in set_bad_users[:6]:
         w(f"     animeID={a}: csv_rating={cmap.get(a)} npy_rating={nmap.get(a)} in_smap={a in smap}")
     # 该用户在 csv / npy 中的行数差异
     w(f"  行数: csv={len(csv_rows.get(u,[]))} npy={len(npy_rows.get(u,[]))}")
+    # 同一 (用户,物品) 在两边的评分差了多少（预期几乎全是 +1）
     diff_pairs = []
     for a, r in csv_rows.get(u, []):
         if a in nmap and nmap[a] != r:
@@ -151,6 +171,11 @@ for u, c, p in set_bad_users[:6]:
 w("\n" + "=" * 70)
 w("全局：csv 与 npy 的评分差异分布（抽样 1500 用户）")
 w("=" * 70)
+# 把所有抽样用户的「可比单元格」（两边都存在的 (用户,物品)）逐对比较：
+#   tot    可比单元格数
+#   diff   评分不同的数量与占比
+#   deltas 差值分布（csv - npy），预期集中在 +1
+#   flip   差值跨越 7 分边界、会改变正/负判定的数量 —— 这是最关键的一列
 tot = diff = 0
 deltas = defaultdict(int)
 flip = 0
@@ -172,6 +197,9 @@ w("  -> 若 flip > 0，说明两个文件的评分口径确实不同，单一来
 f.close()
 
 # ---------- 落盘结构化结论，供论文/答辩直接引用 ----------
+# 上面是「人看的分析过程」，这里是「机器读的结论」。docs 里引用的是这个 JSON。
+# 注意：这里是**全量抽样**（默认 1500 用户），比 preprocess.py 里的窗口粗检可靠，
+# 涉及 csv/npy 差异率、边界翻转数时一律以本文件为准。
 verdict = {
     "sampled_users": _args.users,
     "positive_rating_threshold": 7,

@@ -7,7 +7,8 @@
 # 上游数据：dataset/id_to_genreids.json —— animeID(str) -> [genre_id, ...]
 #   genre_id 取值域 1..21，语义由 mal_genres 定义。
 #   该对应关系经「动漫集合 Jaccard 重叠」严格推导，21 个 id 全部 jaccard = 1.0000，
-#   即 id 与题材名一一对应、无歧义（推导日志见 logs/probe_stage1c.txt）。
+#   即 id 与题材名一一对应、无歧义。
+#   复核方式：用 animes.csv 的 genres 字段与 id_to_genreids.json 重算 Jaccard 重叠。
 # =============================================================
 
 version: 1
@@ -111,6 +112,9 @@ music_keywords:
   - hip-hop music
 
 # ---------- 合规剔除 ----------
-# 这些题材的动漫一律不进入推荐池与全部实验（论文「伦理与合规」节引用此处）
+# ⚠️ 实测：提供的 dataset.pkl【并未】剔除这两类题材，1,551 个此类物品仍在推荐池内
+#    （占物品池 9.89%）。项目决策：不改动官方切分以保持实验可比，改为
+#    「候选池过滤 + 评估期屏蔽」（item_stats.is_forbidden = 1 即屏蔽名单）。
+#    论文「伦理与合规」节引用此处。
 forbidden_genre_ids: [20, 21]        # Erotica / Hentai
 forbidden_names: [Erotica, Hentai]
