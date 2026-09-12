@@ -227,6 +227,22 @@ LLM_MOCK=true
 | `RATE_LIMIT_ENABLED` | `true` | 是否启用限流（压测时置 false） |
 | `BCRYPT_ROUNDS` | `12` | 密码哈希强度 |
 
+### 2.10 代码仓库
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `GIT_REPO_URL` | `https://github.com/zarbzarb/animes.git` | 项目源码托管地址（GitHub 远程仓库） |
+| `GIT_REPO_BRANCH` | `main` | 主干分支名 |
+
+```bash
+# 首次推送
+git remote add origin $GIT_REPO_URL
+git push -u origin $GIT_REPO_BRANCH
+```
+
+> **说明**：`GIT_REPO_URL` 仅供脚本/文档引用，不含任何凭据。HTTPS 推送需在本地配置 Personal Access Token 或 SSH 密钥，
+> 凭据一律走本机 git credential helper 存储，**禁止写入 `.env` 提交到仓库**。
+
 ---
 
 ## 三、三套环境差异
