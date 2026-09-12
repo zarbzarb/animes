@@ -1,6 +1,6 @@
 # 项目进度总览 · AniRec
 
-> **快照时间**：2026-09-12 17:25 ｜ **最新完成里程碑**：M2.3 滑动窗口 Dataset ｜ **下一里程碑**：M2.4 SASRec 基座（仍待 GPU）
+> **快照时间**：2026-09-12 17:45 ｜ **最新完成里程碑**：**M2.0 训练环境就绪（GPU 可用 + 实测吞吐）** ｜ **下一里程碑**：M2.4 SASRec 基座
 > **当前提交**：以 `git log -1 --oneline` 为准（本文档不写死哈希，避免每次提交后过期）
 >
 > 本文件只回答三个问题：**做到哪了**（§1–2）／**环境撑不撑得住**（§3）／**下一步做什么**（§4–5）。
@@ -14,7 +14,7 @@
 |---|---|---|---|
 | 阶段 0　项目初始化 | — | ✅ 完成 | 目录骨架 + 14 份设计文档 + GitHub 仓库（`zarbzarb/animes`） |
 | **阶段 1　数据预处理与数据集构建** | 15% | ✅ **完成并通过验收** | 7 个脚本 + 全部数据产物 + 8 条实测口径，验收 31/31 |
-| 阶段 2　核心算法与对比实验 | 35% | 🔵 **进行中** | **M2.1 / M2.2 / M2.3 已完成并独立验收（32/32）**；M2.0 驱动已升级、CUDA torch 已装、吞吐基准脚本已就位，待修复驱动文件损坏后出实测耗时；M2.4 起需 GPU |
+| 阶段 2　核心算法与对比实验 | 35% | 🔵 **进行中** | **M2.0 / M2.1 / M2.2 / M2.3 全部完成**：GPU 可用（RTX 2060 / 驱动 616.92 / torch 2.14.0+cu130），实测全实验矩阵保守口径 **1.66 天**；下一步 M2.4 SASRec 基座 |
 | 阶段 3　全栈系统与联调 | 35% | ⬜ 未开始 | 依赖阶段 2 的模型权重与嵌入矩阵 |
 | 阶段 4　测试 | 15% | ⬜ 未开始 | 依赖阶段 3 的可运行系统 |
 
@@ -121,7 +121,7 @@ E:/tools/anaconda/envs/py3_11/python.exe scripts/run_stage1.py
 | CPU | Intel 16 逻辑核 | — |
 | 内存 | 31.7 GB（可用约 14 GB） | 加载 `ratings.npy`（6.9GB）时建议先关掉其他大程序 |
 | **GPU** | **NVIDIA RTX 2060 / 6 GB**（Turing sm_75，桌面版） | **与 `evaluation-plan.md` 3.1 原写的 RTX 3090 24GB 不符，已更正** |
-| GPU 驱动 | **616.92**（Windows 显示版本 `32.0.16.1692`，2026-09-04） | 2026-09-12 由 457.85（CUDA 11.1）升级；包内 CUDA 13 |
+| GPU 驱动 | **616.92**（Windows 显示版本 `32.0.16.1692`，2026-09-04）✅ **已验证可用** | 2026-09-12 由 457.85（CUDA 11.1）升级；`nvlddmkm` RUNNING、设备 ErrCode=0、`cuda.is_available()==True` |
 | 磁盘 | C: 余 92.9 GB / F: 余 66.3 GB（SSD `WDC PC SN730`，健康） | 单模型 checkpoint < 10 MB，够用 |
 | Python | 3.11.16（conda env `py3_11`） | `E:\tools\anaconda\envs\py3_11\python.exe` |
 
@@ -136,6 +136,17 @@ E:/tools/anaconda/envs/py3_11/python.exe scripts/run_stage1.py
 | matplotlib / seaborn | 3.11.0 / 0.13.2 | | — |
 | pytest | 9.1.1（用 `python -m pytest`） | | — |
 
+**GPU 可用性验证（2026-09-12 17:27 实测，M2.0）**：
+
+| 检查项 | 实测值 |
+|---|---|
+| `torch.cuda.is_available()` | **True** |
+| 设备 / 架构 / 显存 / SM 数 | `NVIDIA GeForce RTX 2060` / `sm_75` / 6.0 GB / 30 |
+| CUDA 运行时 / cuDNN | 13.0 / 92400 |
+| fp32 矩阵乘实测 | 4.6 TFLOPS |
+| **fp16 矩阵乘实测** | **12.8 TFLOPS**（Tensor Core 已启用，AMP 可用） |
+| AMP 前向 + 反向 | 通过（峰值显存 0.32 GB） |
+
 **torch 安装口径（勿走默认源）**：PyPI 默认源上的 torch 是 `+cpu` 轮子，装完不报错、
 但 `torch.cuda.is_available()` 恒为 `False`（本项目踩过一次）。必须显式指定索引：
 
@@ -146,47 +157,44 @@ pip install --index-url https://download.pytorch.org/whl/cu130 torch==2.14.0+cu1
 更换后回归：`python -m pytest tests/ -q` → **115 passed**（指标口径未受影响）。
 旧环境快照留档 `logs/pip_freeze_before_cuda.txt`（149 行，可回滚）。
 
-### 3.3 ⚠️ 剩余阻塞项：驱动文件损坏，GPU 仍不可用（2026-09-12 17:00 已定位根因）
+### 3.3 ✅ 已解决的阻塞项：驱动文件损坏（2026-09-12 定位并修复）
 
-驱动与 torch 都已就绪，但 `torch.cuda.is_available()` 仍为 `False`。
-逐步排除后的完整证据链：
+**症状**：驱动 616.92 装完后 `torch.cuda.is_available()` 仍为 `False`，
+且 `nvidia-smi` 报"权限不足"（**误导性提示**，沙箱下每次都是这句）。
 
-| 检查项 | 实测结果 | 排除的猜测 |
+**根因**：安装写盘时 **`nvlddmkm.sys` 这一个 109 MB 文件被写坏**（签名 HashMismatch），
+Windows 因哈希不符拒绝加载 → 设备 Code 52 → CUDA 报告无设备。
+同目录其余文件完好、安装包签名有效 ⇒ **不是下载损坏，无需重下**。
+
+| 检查项 | 修复前 | 修复后 |
 |---|---|---|
-| `cuInit(0)`（ctypes 直调） | 返回 **100 = CUDA_ERROR_NO_DEVICE** | 排除「torch 装错」「没装 CUDA 运行时」 |
-| 设备管理器 | RTX 2060 `Status=Error`、**`ConfigManagerErrorCode=52`**（无法验证驱动签名） | — |
-| 内核服务 `nvlddmkm` | **STOPPED**，退出码 **1077**（本次开机从未尝试启动） | — |
-| Kernel-PnP 事件 219 | `\Driver\nvlddmkm 加载失败`，状态 **0xC0000428** = `STATUS_INVALID_IMAGE_HASH` | 排除权限问题 |
-| CodeIntegrity 事件 3004 | 无法验证 `...\nvlesi.inf_amd64_33018540a16fd177\nvlddmkm.sys` 映像完整性 | — |
-| 该文件数字签名 | **HashMismatch** | **← 根因** |
-| 同目录其余 17 个大文件 | 全部 `Valid` | 排除「整个驱动包坏了」 |
-| 安装包 `616.92-...whql.exe` | 签名 `Valid`（NVIDIA Corporation） | 排除「下载损坏」，无需重下 |
-| 磁盘 | C: 余 92.9 GB，SSD 健康 | 排除空间不足与坏盘 |
+| `cuInit(0)`（ctypes 直调） | 100 = `CUDA_ERROR_NO_DEVICE` | 0 = 成功 |
+| 设备管理器 | `Status=Error`、**Code 52** | `Status=OK`、**ErrCode=0** |
+| 内核服务 `nvlddmkm` | **STOPPED**（退出码 1077） | **RUNNING** |
+| Kernel-PnP 事件 219 | `0xC0000428` = `STATUS_INVALID_IMAGE_HASH` | — |
+| `nvlddmkm.sys` 数字签名 | **HashMismatch** ← 根因 | `Valid` |
+| 同目录其余 17 个大文件 | 全部 `Valid` | — |
+| 安装包 `616.92-...whql.exe` | 签名 `Valid`（NVIDIA Corporation） | — |
+| 磁盘 | C: 余 92.9 GB、SSD 健康 | — |
 
-**结论**：安装写盘时 **`nvlddmkm.sys` 这一个 109 MB 文件被写坏了**，Windows 因哈希不符
-拒绝加载 → 设备 Code 52 → CUDA 报告无设备。其余文件完好，所以不是包的问题。
+**修复过程**（用户操作）：设备管理器卸载设备并删除驱动 → 重启 → 管理员重跑安装包
+（自定义安装 + 勾选执行清洁安装）→ 重启 → `nvidia-smi` 正常输出。
 
-**修复步骤**（需管理员，由用户执行）：
-
-1. 设备管理器 → 显示适配器 → `NVIDIA GeForce RTX 2060` → 右键**卸载设备** → 勾选「尝试删除此设备的驱动程序」→ 确定
-2. **重启**
-3. 重新运行 `C:\Users\32683\Downloads\616.92-desktop-win10-win11-64bit-international-nsd-dch-whql.exe`（右键管理员）→ 选「自定义（高级）」→ 勾选**执行清洁安装**
-4. **重启**
-5. 复验：`nvidia-smi` 应能正常输出；再由 AI 跑 `python scripts/bench_throughput.py`
-
-> 若 1–4 仍不生效：用 DDU（Display Driver Uninstaller）在安全模式下彻底清理后重装。
-> 本机未装 7-Zip / DDU，需要时现下。
->
-> 顺带记录：本机 **HVCI（内存完整性）已开启**、VBS 开启、`VulnerableDriverBlocklistEnable=1`，
-> 排查驱动类问题时这些状态会影响判断。
+> 排查经验（值得记住）：
+> 1. `nvidia-smi` 的"权限不足"会掩盖真实原因（Code 52），必须交叉验证
+>    **设备状态、内核服务状态、驱动文件签名**三者。
+> 2. `Get-AuthenticodeSignature` 对单个驱动文件返回 `HashMismatch` 是"文件被写坏"的
+>    决定性证据；若同目录其他大文件都 `Valid`，即可排除整个包与下载环节的问题。
+> 3. 本机 **HVCI（内存完整性）已开启**、VBS 开启、`VulnerableDriverBlocklistEnable=1`，
+>    排查驱动类问题时这些状态会影响判断。
 
 ### 3.4 需要随本次进度一起更正/留意的文档不实之处
 
 | 位置 | 现状 | 处理 |
 |---|---|---|
-| `evaluation-plan.md` 3.1 硬件表 | 写「RTX 3090 24GB / 32GB / 双端验证」 | 应改为本机实测（RTX 2060 6GB / Windows），已在本次提交更正 |
-| `evaluation-plan.md` 6.5 耗时预估 | 「合计 ~77 h」基于 3090 + 全量网格 | 待 M2.0 实测后重估，当前数字不可作为排期依据 |
-| `evaluation-plan.md` 3.2 环境固化 | 依赖 `requirements.txt` | 阶段 2 装完 CUDA torch 后需重新 `freeze` |
+| `evaluation-plan.md` 3.1 硬件表 | 原写「RTX 3090 24GB」 | ✅ 已改为本机实测（RTX 2060 6GB / Windows / 驱动 616.92） |
+| `evaluation-plan.md` 6.5 耗时预估 | 原写「合计 ~77 h」基于 3090 + 全量网格 | ✅ **已用实测替换**：整个矩阵保守口径 **1.66 天**，见 §5.0 |
+| `evaluation-plan.md` 3.2 环境固化 | 依赖 `requirements.txt` | ✅ 已生成 `requirements.lock`（152 包，记录真实版本号，避开 conda 的本地路径问题） |
 
 ---
 
@@ -196,7 +204,7 @@ pip install --index-url https://download.pytorch.org/whl/cu130 torch==2.14.0+cu1
 
 | # | 里程碑 | 做什么 | 产物 | 验收标准 |
 |---|---|---|---|---|
-| **M2.0** | 训练环境就绪 | 按 §6 D1 选定路线装 GPU 版 torch；写吞吐基准脚本，实测 s/step 并外推单 epoch 耗时 | `scripts/bench_throughput.py` + 环境快照 | 进度：驱动已升到 **616.92**、torch 已换 **2.14.0+cu130**、基准脚本已就位并通过数据侧自检；**卡在驱动文件损坏（§3.3），`cuda.is_available()` 仍为 False**，修复后即可产出实测吞吐表 |
+| **M2.0** ✅ | 训练环境就绪 | 装 GPU 版 torch；写吞吐基准脚本，实测 s/step 并外推单 epoch 耗时 | `scripts/bench_throughput.py`、`requirements.lock` | ✅ **已完成**：GPU 可用（驱动 616.92 / torch 2.14.0+cu130）；实测最优 **bs2048+AMP = 40,083 samples/s**；全矩阵保守口径 **1.66 天**（见 §5.0） |
 | **M2.1** ✅ | 指标唯一实现 | 按 `evaluation-plan.md` 5.1 实现 HR@K / NDCG@K / Recall@K / MRR，含并列稳定排序 | `models/eval/metrics.py`、`tests/test_metrics/`、`scripts/check_metrics_mutation.py` | ✅ **已完成**：单测 88/88 通过；变异测试 6/6 被捕获 |
 | **M2.2** ✅ | 评估器 | 1 正 + 100 负候选，确定性负采样；支持全量 / 分题材 / 冷启动三种切分 | `models/eval/evaluator.py`、`models/data/negatives.py`、`tests/test_eval/` | ✅ **已完成**：单测 22/22；验收 C/D/E 组全过；随机打分器 HR@10 实测 0.1023（期望 0.0990±0.0064，评估链路无偏） |
 | **M2.3** ✅ | 滑动窗口 Dataset | 按 `max_len=50` 在线生成样本，不落盘（输入上限 48） | `models/sasrec/dataset.py`、`tests/test_sasrec/` | ✅ **已完成**：单测 29/29；验收 B 组在真实数据（最长序列 8,917）上通过因果性验证 |
@@ -207,7 +215,7 @@ pip install --index-url https://download.pytorch.org/whl/cu130 torch==2.14.0+cu1
 | **M2.8** | 实验编排 | `run_experiments.py` 按 `configs/experiment.yaml` 串起 E1~E4，落盘 `experiments/{id}/`，回写 `result-analysis.md` | `scripts/run_experiments.py`、`scripts/plot_results.py` | 一次命令跑完四组；输出目录结构与 `evaluation-plan.md` 8.2 一致 |
 | **M2.9** | 填表与作图 | 真实指标填入 `result-analysis.md` / `ablation-study.md`，生成 4 张图 | 指标表 + `figures/*.png` | **每个数字都有出处（实验目录名）**，无出处不许填 |
 
-推荐执行顺序即上表自上而下；**M2.1–M2.3 与 GPU 环境无关，可以立刻开工**（这也是我建议的下一步起点）。
+推荐执行顺序即上表自上而下。**M2.0–M2.3 均已完成，下一步从 M2.4（SASRec 基座）开始**，环境已无阻塞。
 
 ### 4.1 已完成里程碑记录
 
@@ -271,7 +279,7 @@ pip install --index-url https://download.pytorch.org/whl/cu130 torch==2.14.0+cu1
 
 ---
 
-## 五、训练规模与时间预算（必须先实测）
+## 五、训练规模与时间预算（✅ M2.0 已实测校准）
 
 阶段一产物给出的训练规模：
 
@@ -289,6 +297,45 @@ pip install --index-url https://download.pytorch.org/whl/cu130 torch==2.14.0+cu1
 > 这个取舍在 M2.3 落地时明确，吞吐基准脚本 `scripts/bench_throughput.py` 已按两种口径分别打印。
 
 **结论：1.09 亿样本/epoch 在 CPU 上不可行**（量级上每 epoch 是小时~天级），必须用 GPU。
+
+### 5.0 ✅ 实测吞吐与总耗时（2026-09-12，RTX 2060 6GB）
+
+实测配置：batch 2048 + AMP + 训练候选 2（1 正 1 负），
+**train 40,083 samples/s、infer 98,088 samples/s**。
+复现：`python scripts/bench_throughput.py --batch-sizes 512 1024 2048 --train-negatives 1`
+
+| 档位 | 用户数 | 样本数/epoch | sec/epoch | 跑满 30 epoch |
+|---|---|---|---|---|
+| `smoke` | 6,533 | 535,046 | 13 s | 3 分钟 |
+| `debug` | 26,134 | 2,180,315 | 54 s | 27 分钟 |
+| `dev` | 65,335 | 5,442,340 | 136 s | 1.13 h |
+| `main` | 130,669 | 10,927,444 | 273 s | 2.27 h |
+| `full` | 1,306,691 | 109,081,471 | 2,721 s | 22.7 h |
+
+**整个实验矩阵（约 26 次训练）保守口径合计 = 1.66 天** —— 口径是"每档都跑满 `max_epochs`"，
+实际有早停（patience=10），会明显更短。早期按 RTX 3090 估的「~77 h」已废弃，不得再引用。
+
+三条实测发现（都会影响后续调参）：
+
+1. **AMP 只在 batch ≥ 512 时才有收益**。bs=128/256 时 AMP 反而**变慢**
+   （0.80x / 0.91x —— kernel 启动开销盖过 Tensor Core 的收益）；bs=1024 达 **1.48x**、
+   bs=2048 达 **1.54x**。故 `model.yaml` 的 `batch_size` 由 256 提到 **1024**，
+   且必须与 `amp: true` 搭配使用（该条已写进配置注释）。
+2. **训练候选集大小不是主要开销**。训练侧 1 / 10 / 100 个负样本 →
+   40,083 / 32,555 / 31,171 samples/s，**只差 26%**。主开销是**序列编码器**
+   （因果自注意力，O(L²)），这也解释了为什么 MFU 只有 6.2%。
+   推论：想再提速应走「缩短序列 / 按批动态填充」，而不是缩减候选集。
+   > 顺带修正一处口径混淆：`neg_sample_num: 100` 是**评估**口径（1 正 + 100 负），
+   > 训练侧按 SASRec 原论文取「每位置 1 个负样本」，两者是**两件事**。
+   > 修正前基准脚本把评估口径误用到训练侧，会让训练耗时被高估。
+   > 现已在 `model.yaml` 用 `train.negatives_per_position` 显式区分。
+3. **显存不是瓶颈，但 batch 有硬上限**。bs2048 只用 2.36 GB / 6 GB；
+   而 bs4096 触顶（5.46 GB）后性能**崩塌到 5,220 samples/s（慢 7 倍）**，
+   属 WDDM 显存超限颠簸，不要使用。
+
+> ⚠️ 上表是「纯计算」吞吐，不含 DataLoader 取数与滑窗组装开销；
+> 端到端耗时以训练日志的首个 epoch 为准。`bench_throughput.py` 在 M2.4 完成后
+> 需用 `--mode model` 复测替换（M2.4 的真实模型会替换参考计算图）。
 
 ### 5.1 训练档位（✅ 已定 2026-09-12，配置见 `configs/scale.yaml`）
 
@@ -323,9 +370,9 @@ E1~E4 + HPO（60 组）+ 补充实验，再乘 3 个随机种子，合计约 **2
    不是相对全量用户池 —— 否则会出现「冒烟档训练 6,533 人、却评估 65,335 人」的荒谬配比。
    留一法协议下每个用户的测试物品已被剥离，**在训练过的用户上评估是标准做法、不构成泄漏**。
    `main` 档取 `eval_user_ratio: 1.0`（正式数字用本档全部用户），其余档位按成本控制取 0.1~0.2。
-   > 另注：早期文档称「全量评估 1.32 亿次打分与一个训练 epoch 同量级」是**高估**——
-   > 1.32 亿里绝大多数是 101 候选的**点积**（dim 64，几乎免费），真正的开销只有
-   > n_eval_users 次序列编码。待实测后正式更正 `model.yaml` 与 `evaluation-plan.md` 的这段描述。
+   > ✅ **已实测证实为高估**：infer 98,088 samples/s ⇒ `main` 档全量评估（130,669 用户）
+   > 每轮仅约 **1.6 秒**，30 epoch 共 6 轮 ≈ **10 秒**，相对该档训练耗时（2.27 h）可忽略。
+   > `model.yaml` 中「评估与训练同量级」的旧注释已删除。
 7. 所有对比模型必须使用**完全相同的抽样与划分**，否则对比无效。
 
 完整的三条抽样口径、算力预算表与四条不变式见 [evaluation-plan.md](evaluation-plan.md) §6.6。
@@ -338,7 +385,7 @@ E1~E4 + HPO（60 组）+ 补充实验，再乘 3 个随机种子，合计约 **2
 |---|---|---|---|
 | D1 | **GPU 路线** | ✅ **已定（2026-09-12）** | **路线 A：更新显卡驱动 + 装 CUDA 版 torch**，实施清单见 §6.1 |
 | D2 | **训练档位** | ✅ **已定（2026-09-12）** | 五档位制 `smoke / debug / dev / main / full`，配置见 `configs/scale.yaml`；正式档取 `main` = 10% 用户 |
-| D3 | **正式实验规模** | ✅ **已定（2026-09-12）** | 先用 `main` 档（10%）出论文主表；`full` 档作为「有余力再跑」的附录验证。训练次数由约 230 次压到约 26 次，**不再以早期文档的 77 h 为排期依据** |
+| D3 | **正式实验规模** | ✅ **已定（2026-09-12），M2.0 实测后确认可行** | 先用 `main` 档（10%）出论文主表；`full` 档作为「有余力再跑」的附录验证。训练次数由约 230 次压到约 26 次，实测全矩阵保守口径 **1.66 天**。**预算充裕** —— 若想提升说服力，可把 `main` 提到 20%（单次 4.5 h，E1 约 1.7 天） |
 | D4 | 是否现在装 `faiss` | 待定 | 阶段 2 召回可先用 numpy 精确内积（15,687 物品规模完全够），**faiss 推迟** |
 
 ### 6.1 D1 实施清单（路线 A：更新驱动 + 装 CUDA 版 torch）
@@ -349,21 +396,17 @@ E1~E4 + HPO（60 组）+ 补充实验，再乘 3 个随机种子，合计约 **2
 | 步 | 操作 | 状态 / 校验方式 |
 |---|---|---|
 | 1 | 到 NVIDIA 官网下载 RTX 2060（Turing）适配的新版驱动 | ✅ **已完成**：`616.92-desktop-win10-win11-64bit-international-nsd-dch-whql.exe`（945 MB，签名 Valid） |
-| 2 | 安装驱动（勾选「执行清洁安装」），重启 | ⚠️ **已执行但失败**：`nvlddmkm.sys` 写坏、签名 HashMismatch，设备 Code 52，详见 §3.3 |
-| 3 | 装 CUDA 版 torch | ✅ **已完成**：`torch==2.14.0+cu130`，`torch.version.cuda == 13.0`；但 `cuda.is_available()` 仍 False（受步骤 2 牵连） |
-| 4 | 写吞吐基准脚本，实测单 epoch 耗时 T | ✅ 脚本 `scripts/bench_throughput.py` 已就位并通过数据侧自检；⏳ 实测待 GPU 可用 |
-| 5 | 重新固化环境快照并更新 `evaluation-plan.md` 3.1/3.2 与 `progress.md` §3 | 🟡 部分完成：`progress.md` §3 已更新；`pip freeze` 与环境快照待 GPU 打通后一并固化 |
+| 2 | 安装驱动（勾选「执行清洁安装」），重启 | ✅ **已完成**：首次安装失败（`nvlddmkm.sys` 写坏 → Code 52），按 §3.3 的 5 步重装后设备 `ErrCode=0`、`nvlddmkm` RUNNING |
+| 3 | 装 CUDA 版 torch | ✅ **已完成**：`torch==2.14.0+cu130`，`cuda.is_available() == True`，sm_75 / 6 GB / 30 SM |
+| 4 | 写吞吐基准脚本，实测单 epoch 耗时 T | ✅ **已完成**：实测最优 40,083 samples/s，全矩阵保守口径 **1.66 天**（§5.0） |
+| 5 | 重新固化环境快照并更新文档 | ✅ **已完成**：`requirements.lock`（152 包）+ `model.yaml`/`scale.yaml` 实测校准 + 本文档 §3/§5 |
 
-**🔴 当前唯一待办（需管理员操作，AI 无法代做）**：按 §3.3 的 5 步修复损坏的驱动文件
-（设备管理器卸载设备并删除驱动 → 重启 → 重跑安装包 → 重启 → 复验 `nvidia-smi`）。
+**✅ M2.0 已闭环**：驱动修复 → GPU 可用 → 实测吞吐 → 校准档位与预算 → 固化依赖，
+五步全部完成，**当前无任何环境阻塞**。下一步直接进 **M2.4（SASRec 基座训练）**。
 
-**✅ 已用完的并行路径**：M2.2（评估器）与 M2.3（滑动窗口 Dataset）均不依赖 GPU，
-已于 2026-09-12 完成并通过 **32 项独立验收**。至此**不依赖 GPU 的工作已全部做完**，
-修好驱动后即可直接进入 M2.4（SASRec 基座）。
-
-> 下一步如果不是修驱动，就只能做「不产生真实指标」的准备工作（如 M2.5/M2.6 的
-> 代码骨架）。而按 `result-analysis.md` 的填报规范，**无实测出处的数字一律不许填**，
-> 因此建议优先修驱动。
+> 按 `result-analysis.md` 的填报规范，**无实测出处的数字一律不许填**。
+> 现在 `logs/bench_throughput.json` 已产出真实吞吐，档位与预算均有实测依据。
+> 注意该文件在 `.gitignore` 内，故关键数字已内嵌到本文档 §5.0 与 `configs/*.yaml`。
 
 ---
 
@@ -371,12 +414,13 @@ E1~E4 + HPO（60 组）+ 补充实验，再乘 3 个随机种子，合计约 **2
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| 驱动 457.85 过旧，CUDA 轮子装不上 | 阶段 2 直接停摆 | D1 决策；B 路线已确认可行 |
-| **驱动文件 `nvlddmkm.sys` 写坏 → 设备 Code 52** | `cuda.is_available()` 恒为 False，训练无法开工 | 已定位根因（§3.3），5 步修复方案待执行 |
-| 6 GB 显存 | 批量受限，可能需 `batch_size` 从 256 降到 128 | SASRec 很小（hidden 64），预计不成为瓶颈；实测确认 |
-| 1.09 亿样本/epoch 且全矩阵约 230 次训练 | 训练与网格搜索时间爆炸，毕设做不完 | 五档位制 + HPO 降档 + 跨实验组复用结果 + 单种子，训练次数压到约 26 次（`configs/scale.yaml`） |
-| 抽样训练可能被质疑代表性 | 答辩被追问 | 只抽用户不抽物品、确定性嵌套抽样、所有对比模型同口径；论文「实验设置」如实披露抽样比例与理由 |
-| 评估开销与训练同量级（1.32 亿次打分/轮） | 容易被忽略，实际吃掉近半时间 | `eval.every_n_epochs: 5` + 同档位内固定的评估子集 |
+| ~~驱动 457.85 过旧，CUDA 轮子装不上~~ | — | ✅ 已解决：升级到 616.92 |
+| ~~驱动文件 `nvlddmkm.sys` 写坏 → 设备 Code 52~~ | — | ✅ 已解决（§3.3）：清洁重装后 `ErrCode=0`、`nvlddmkm` RUNNING |
+| ~~6 GB 显存不够用~~ | — | ✅ 已证伪：bs2048 仅用 2.36 GB。但**上限确实存在**：bs4096 触顶（5.46 GB）后崩塌到 5,220 samples/s |
+| ~~1.09 亿样本/epoch 导致毕设做不完~~ | — | ✅ 已证伪：实测全矩阵保守口径 **1.66 天**（§5.0） |
+| ~~评估开销与训练同量级~~ | — | ✅ 已证伪：`main` 档全量评估每轮约 1.6 秒（§5.1 要点 6） |
+| **`batch_size` 由 256 提到 1024 后，`lr` 未重标定** | 可能收敛变慢/变差，且易被误判成模型结构问题 | `model.yaml` 已标注待办：M2.4 在 `dev` 档对比 `{0.001, 0.002, 0.004}` + warmup 后定稿 |
+| 基准是"纯计算"吞吐，不含 DataLoader 开销 | 端到端每 epoch 可能比预算表慢 | 以训练日志的首个 epoch 实测为准；M2.4 落地后用 `bench_throughput.py --mode model` 复测 |
 | **用户重复消费导致答案泄漏（test 1.7% / val 2.0%）** | 不剔除会让指标虚高，且"变好了"不易察觉 | `evaluator.drop_leaked_samples()` 强制剔除并上报数量；论文必须披露剔除数与实际评估样本量 |
 | 负样本若各模型各抽一套 | 对比实验直接失效 | 唯一实现 `models/data/negatives.py` + `(seed, row)` 派生独立随机流（顺序/子集无关）+ 落盘缓存复用 |
 | 无时间戳导致的时序口径 | 论文「局限性」必须写明 | 已在 `evaluation-plan.md` 2.3 记录，阶段 2 沿用同一口径 |
