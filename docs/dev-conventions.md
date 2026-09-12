@@ -356,6 +356,9 @@ while True:
 | 必须测的内容 | 原因 |
 |---|---|
 | `models/eval/metrics.py` 的 HR/NDCG | 指标错了整个实验全错，用 sklearn/手工算例对齐 |
+| **排序并列口径与稳定性** | 漏掉 `stable=True` 时指标会随实现/线程数/设备漂移而**不可复现**，且小规模自测看不出（n≥64 才暴露）。必须在真实 101 候选规模上用独立参考实现对拍 |
+| **指标聚合口径** | `Recall@K` 是 micro（Σ命中/Σ相关）、HR/NDCG/MRR 是 macro；写反了在小数据上仍然"看起来合理" |
+| **测试本身是否有效** | 测试全绿 ≠ 测试有用。改指标后跑一次变异测试确认断言能变红 |
 | Agent 的降级路径 | 降级逻辑最容易在重构中失效 |
 | Agent 的 Pydantic Schema | 契约变更会静默影响上下游 |
 | 注意力掩码无未来信息泄漏 | 序列推荐的经典 bug，会导致指标虚高 |
@@ -423,6 +426,27 @@ pytest --cov=server --cov=agents --cov-report=html   # 覆盖率报告
 # Prompt 回归（需要 LLM Key，耗时较长，单独跑）
 pytest tests/prompts/ -v --run-llm
 ```
+
+本机没有全局 pytest 命令时用：`python -m pytest tests/ -v`
+（`pytest.ini` 已配置 `pythonpath = .`，否则 `tests/` 下 import 不到 `models`）。
+
+### 4.5 变异测试（验证「测试是否有效」）
+
+测试全绿只能说明「没发现错」，不能说明「能发现错」。指标体系尤其危险——
+口径写错时数字往往仍然"看起来合理"。因此改了 `models/eval/metrics.py` 之后，
+除跑单测外还要跑一次变异测试：
+
+```bash
+python scripts/check_metrics_mutation.py          # 6 类典型改错，要求逐一被测试抓住
+python scripts/check_metrics_mutation.py --list   # 只列出变异项
+```
+
+退出码 `0` = 基线通过且全部变异被捕获；`1` = 有变异漏网（说明测试有盲区，须补断言）；
+`2` = 原文件恢复失败（脚本会保留 `metrics.py.mutation-backup` 供人工恢复）。
+
+> 脚本会先断言**基线为绿**再开始变异。这不是多余的：若基线本身在失败，退出码恒非 0，
+> 每个变异都会"假装被抓住"，整个结论作废。这一条正是踩坑后补上的。
+
 
 ---
 

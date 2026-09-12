@@ -1,6 +1,7 @@
 # 项目进度总览 · AniRec
 
-> **快照时间**：2026-09-12 16:20 ｜ **当前提交**：`f9f9a58` ｜ **下一里程碑**：M2.0 训练环境就绪
+> **快照时间**：2026-09-12 17:00 ｜ **最新完成里程碑**：M2.1 指标唯一实现 ｜ **下一里程碑**：M2.2 评估器
+> **当前提交**：以 `git log -1 --oneline` 为准（本文档不写死哈希，避免每次提交后过期）
 >
 > 本文件只回答三个问题：**做到哪了**（§1–2）／**环境撑不撑得住**（§3）／**下一步做什么**（§4–5）。
 > 每完成一个里程碑请更新本文件；文档索引同步维护在 [README.md](README.md)。
@@ -13,14 +14,14 @@
 |---|---|---|---|
 | 阶段 0　项目初始化 | — | ✅ 完成 | 目录骨架 + 14 份设计文档 + GitHub 仓库（`zarbzarb/animes`） |
 | **阶段 1　数据预处理与数据集构建** | 15% | ✅ **完成并通过验收** | 7 个脚本 + 全部数据产物 + 8 条实测口径，验收 31/31 |
-| 阶段 2　核心算法与对比实验 | 35% | ⬜ 未开始 | **卡在训练环境**：当前 torch 是 CPU 版，见 §3.3 |
+| 阶段 2　核心算法与对比实验 | 35% | 🔵 **进行中** | M2.1 指标层已完成；M2.0 训练环境待装 GPU 版 torch（路线已定） |
 | 阶段 3　全栈系统与联调 | 35% | ⬜ 未开始 | 依赖阶段 2 的模型权重与嵌入矩阵 |
 | 阶段 4　测试 | 15% | ⬜ 未开始 | 依赖阶段 3 的可运行系统 |
 
 ```mermaid
 flowchart LR
     S0["阶段 0<br/>项目初始化"] --> S1["阶段 1<br/>数据预处理<br/>✅ 15%"]
-    S1 --> S2["阶段 2<br/>核心算法与实验<br/>⬜ 35%"]
+    S1 --> S2["阶段 2<br/>核心算法与实验<br/>🔵 进行中 35%"]
     S2 --> S3["阶段 3<br/>全栈系统与联调<br/>⬜ 35%"]
     S3 --> S4["阶段 4<br/>测试<br/>⬜ 15%"]
     S2 -.模型权重/嵌入.-> S3
@@ -166,8 +167,8 @@ E:/tools/anaconda/envs/py3_11/python.exe scripts/run_stage1.py
 
 | # | 里程碑 | 做什么 | 产物 | 验收标准 |
 |---|---|---|---|---|
-| **M2.0** | 训练环境就绪 | 按 §6 选定路线装 GPU 版 torch；写吞吐基准脚本，实测 s/step 并外推单 epoch 耗时 | `scripts/bench_throughput.py` + 环境快照 | `torch.cuda.is_available()==True`；能跑通 1 个 epoch 并给出耗时 |
-| **M2.1** | 指标唯一实现 | 按 `evaluation-plan.md` 5.1 实现 HR@K / NDCG@K / Recall@K / MRR，含并列稳定排序 | `models/eval/metrics.py` | 单元测试用手算样例比对，允许误差 1e-6 |
+| **M2.0** | 训练环境就绪 | 按 §6 D1 选定路线装 GPU 版 torch；写吞吐基准脚本，实测 s/step 并外推单 epoch 耗时 | `scripts/bench_throughput.py` + 环境快照 | `torch.cuda.is_available()==True`；能跑通 1 个 epoch 并给出耗时。**路线已定为 A（更新驱动），待执行** |
+| **M2.1** ✅ | 指标唯一实现 | 按 `evaluation-plan.md` 5.1 实现 HR@K / NDCG@K / Recall@K / MRR，含并列稳定排序 | `models/eval/metrics.py`、`tests/test_metrics/`、`scripts/check_metrics_mutation.py` | ✅ **已完成**：单测 88/88 通过；变异测试 6/6 被捕获 |
 | **M2.2** | 评估器 | 1 正 + 100 负候选，走预生成的负样本 pkl；支持全量 / 分题材 / 冷启动三种切分 | `models/eval/evaluator.py` | 同一批预测重复跑结果一致；两种切分都能出 `metrics.json` |
 | **M2.3** | 滑动窗口 Dataset | 按 `max_len=50` 在线生成样本，不落盘 | `models/sasrec/dataset.py` | **因果性测试**：第 t 个样本不得看到 t 之后的信息 |
 | **M2.4** | SASRec 基座 | 2 层 2 头 hidden 64 dropout 0.2 + BCE 负采样 + 早停（看 val NDCG@10, patience=10） | `models/sasrec/{model,config,train}.py` | 在开发档上 loss 稳定下降，val NDCG@10 明显高于随机基线 |
@@ -178,6 +179,33 @@ E:/tools/anaconda/envs/py3_11/python.exe scripts/run_stage1.py
 | **M2.9** | 填表与作图 | 真实指标填入 `result-analysis.md` / `ablation-study.md`，生成 4 张图 | 指标表 + `figures/*.png` | **每个数字都有出处（实验目录名）**，无出处不许填 |
 
 推荐执行顺序即上表自上而下；**M2.1–M2.3 与 GPU 环境无关，可以立刻开工**（这也是我建议的下一步起点）。
+
+### 4.1 已完成里程碑记录
+
+#### M2.1 指标唯一实现 ✅（2026-09-12）
+
+| 项 | 内容 |
+|---|---|
+| 交付 | `models/eval/metrics.py`（`hr_at_k` / `ndcg_at_k` / `recall_at_k` / `mrr` / `positive_rank` / `ranking_metrics`）、`models/__init__.py`、`models/eval/__init__.py`、`pytest.ini` |
+| 测试 | `tests/test_metrics/` 3 个文件 88 个用例，覆盖手工算例、**暴力通用公式对拍**（rank 1~20 × K∈{5,10}）、并列口径、批量独立性、错误输入、空集 |
+| 质量证据 | `scripts/check_metrics_mutation.py` —— 注入 6 类典型改错（HR 边界、NDCG 分母、去掉 `stable=True`、排名少 +1、Recall micro→macro、批量全局排序），**6/6 被测试抓住** |
+| 复现命令 | `python -m pytest tests/ -v`（约 2 s）、`python scripts/check_metrics_mutation.py`（约 15 s） |
+
+**两条实测发现（已写入 `evaluation-plan.md` 5.2）：**
+
+1. **必须显式写 `stable=True`，不能依赖默认行为。**
+   实测 torch 2.14.0：n ≤ 32 且并列少时非稳定排序"碰巧"按列序输出，
+   **n ≥ 64 时才暴露**（101 候选的真实规模必然满足，实测 30/30 个随机种子都出现差异）。
+   漏掉它会让 NDCG 随实现/线程数/设备变化而**不可复现**，且指标数字上看不出来。
+   回归测试用纯 Python 参考实现 `sorted(key=(-score, col))` 在 101 规模对拍锁定。
+
+2. **并列时对正样本取乐观口径**（正样本放第 0 列 + 稳定排序 ⇒ 完全并列时排第 1）。
+   这是**口径选择**而非实现细节，需在论文「评价协议」写一句；换规则会得到不同的 NDCG。
+
+> 顺带记录的流程教训：第一版测试**漏掉了 `stable=True` 的断言**（改成 `False` 后 88 个测试仍全绿），
+> 是变异测试发现的；而在修这个漏洞时又出现「基线本身在失败」，导致那一轮变异结论**全部作废**。
+> 因此 `check_metrics_mutation.py` 现在会**先断言基线为绿**再开始变异。
+
 
 ---
 
@@ -213,12 +241,28 @@ E:/tools/anaconda/envs/py3_11/python.exe scripts/run_stage1.py
 
 ## 六、待决策（不决定就无法开工）
 
-| # | 决策项 | 选项 | 建议 |
+| # | 决策项 | 状态 / 选项 | 结论 |
 |---|---|---|---|
-| D1 | **GPU 路线** | A 更新驱动+新 CUDA torch ／ B cu118 降版 ／ C 纯 CPU | **A**（性能与后续维护最好）；若不便动驱动则 B（单开新 env） |
-| D2 | **训练档位** | 开发档抽样比例（5% / 10% / 20%） | **先 5% 跑通链路，再按实测吞吐决定正式档** |
-| D3 | **正式实验规模** | 全量 E1+E2+E3 ／ 只全量跑最终模型、基线用开发档 | 视 D1+D2 实测结果再定，**不以文档预估的 77 h 为排期依据** |
-| D4 | 是否现在装 `faiss` | 装 / 不装 | 阶段 2 召回可先用 numpy 精确内积（15,687 物品规模完全够），**faiss 推迟** |
+| D1 | **GPU 路线** | ✅ **已定（2026-09-12）** | **路线 A：更新显卡驱动 + 装 CUDA 版 torch**，实施清单见 §6.1 |
+| D2 | **训练档位** | 待定 | 开发档抽样比例（5% / 10% / 20%）：先 5% 跑通链路，再按实测吞吐决定正式档 |
+| D3 | **正式实验规模** | 待定 | 全量 E1+E2+E3 ／ 只全量跑最终模型、基线用开发档：视 M2.0 实测结果再定，**不以文档预估的 77 h 为排期依据** |
+| D4 | 是否现在装 `faiss` | 待定 | 阶段 2 召回可先用 numpy 精确内积（15,687 物品规模完全够），**faiss 推迟** |
+
+### 6.1 D1 实施清单（路线 A：更新驱动 + 装 CUDA 版 torch）
+
+> 下面 1–3 步需要**你本人操作**（装驱动要管理员权限，我无法代做）；
+> 4–5 步我可以接手，装完顺带把 `evaluation-plan.md` 3.2 的环境快照重新固化。
+
+| 步 | 操作 | 校验方式 |
+|---|---|---|
+| 1 | 到 NVIDIA 官网下载 RTX 2060（Turing）适配的**新版 Game Ready / Studio 驱动**（任一 5xx 及以上版本） | — |
+| 2 | 安装驱动（建议勾选「执行清洁安装」），必要时重启 | 重启后执行 `nvidia-smi`，`CUDA Version` 应显示 12.x |
+| 3 | 确认驱动就绪后告诉我，我来装 torch（先装 cu12x 轮子，失败则回退 cu118 并单独建 env） | `python -c "import torch;print(torch.cuda.is_available(), torch.version.cuda)"` 应为 `True` + `12.x` |
+| 4 | 写吞吐基准脚本，用 5 万用户子集跑 1 个 epoch，实测 s/step 并外推单 epoch 耗时 | 给出「开发档 / 正式档」两档的**实测**耗时表，替换 §5 的待标定项 |
+| 5 | 重新固化环境快照并更新 `evaluation-plan.md` 3.1/3.2 与 `progress.md` §3 | `pip freeze` 落 `experiments/{exp_id}/requirements_freeze.txt` |
+
+**风险提示**：驱动升级属于系统级操作，若你更希望零风险推进，可以并行让我先做 M2.2（评估器）
+与 M2.3（滑动窗口 Dataset）——两者都不需要 GPU，等驱动就绪再回头做 M2.0。
 
 ---
 
