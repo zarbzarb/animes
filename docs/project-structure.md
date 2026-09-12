@@ -163,14 +163,25 @@ models/
 │   ├── itemcf.py              #   ItemCF 协同过滤
 │   ├── gru4rec.py             #   GRU4Rec
 │   └── README.md
-├── eval/                      # 指标实现的唯一来源
-│   ├── metrics.py             #   HR@K / NDCG@K / Recall@K / MRR
-│   ├── evaluator.py           #   评估循环（全量 / 分题材 / 冷启动子集）
+├── eval/                      # 指标与评估循环的唯一来源
+│   ├── metrics.py             #   HR@K / NDCG@K / Recall@K / MRR（✅ M2.1）
+│   ├── evaluator.py           #   分批前向 + 剔除泄漏 + metrics.json（✅ M2.2）
 │   └── README.md
-├── data/                      # 训练集切分与子集选择
-│   └── user_subset.py         #   确定性嵌套用户抽样（训练档位的实现基础）
+├── data/                      # 数据侧纯函数子包（无 IO）
+│   ├── user_subset.py         #   确定性嵌套用户抽样（训练档位的实现基础）
+│   └── negatives.py           #   负采样唯一实现（评估公平性的实现基础，✅ M2.2）
+├── sasrec/dataset.py          #   滑动窗口 Dataset + 评估输入构造（✅ M2.3）
 └── checkpoint/                # 模型保存/加载工具（state_dict 规范）
 ```
+
+**四块「唯一实现」的边界**（改任何一处都会影响实验可比性）：
+
+| 关注点 | 唯一实现位置 | 谁不能重复实现 |
+|---|---|---|
+| 指标公式 | `models/eval/metrics.py` | 所有脚本、Notebook、Agent |
+| 抽哪些负样本 | `models/data/negatives.py` | 各 baseline、各实验组 |
+| 历史序列怎么拼 | `models/sasrec/dataset.py` | 训练脚本、评估脚本 |
+| 串起来跑前向 | `models/eval/evaluator.py` | `scripts/run_experiments.py` |
 
 ### 算法层的硬性约定
 
@@ -181,6 +192,31 @@ models/
 | **配置用 dataclass** | 不在模型内部硬编码超参，统一从 `config.py` 的 dataclass 注入 |
 | **接口稳定** | 对外只暴露 `encode()` / `forward()` / `score()`，改内部不影响 Agent |
 | **指标唯一实现** | 所有 HR/NDCG 计算只能来自 `models/eval/metrics.py`，禁止在脚本里重写 |
+| **评估器解耦** | `evaluator.py` 通过 `score_fn` 回调打分，**不 import 任何模型**；这样基线与本文模型共用同一套评估代码 |
+
+### 评估栈的接口契约（M2.2 / M2.3 已实现）
+
+```python
+# models/sasrec/dataset.py
+class SlidingWindowDataset(Dataset):
+    """(prefix[0:t] → item[t])，t 从 0 到 n-1，共 Σ train_len 个窗口。
+    输入上限 = max_seq_len - 2 = 48（val/test 各占 1 位），左填充 PAD=0。"""
+
+def build_eval_inputs(train_seqs, user_rows, max_seq_len, split, val_items, ...) -> np.ndarray
+    # split="val"  -> 输入 = train
+    # split="test" -> 输入 = train + val（且不含 test 目标）
+
+# models/data/negatives.py
+def sample_negatives(user_rows, positives, n_items, n_negatives=100, seed=98765,
+                     pool=None, train_seqs=None, ...) -> NegativeSampleResult
+
+# models/eval/evaluator.py
+def evaluate(score_fn, data: EvalData, ks=(5, 10), batch_size=512) -> dict
+def evaluate_grouped(score_fn, data, group_field="genres", ...) -> dict
+def evaluate_cold_start(score_fn, data, ...) -> dict
+# score_fn(input_ids [B,L], candidate_ids [B,1+C]) -> scores [B,1+C]
+#   第 0 列恒为正样本；返回分越大越相关
+```
 
 ### 模型对外接口契约（Agent 依赖这些签名）
 
