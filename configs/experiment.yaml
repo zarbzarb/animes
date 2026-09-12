@@ -8,7 +8,9 @@
 #    原因：本机为 RTX 2060 6GB、纯本地无云算力。按原始全量设计，训练次数约 230 次，
 #    早期按 RTX 3090 估算是「年」量级，毕设无法完成。
 #    分档 + 结果复用 + AMP 后压到约 26 次训练；M2.0 实测（bs2048+AMP）后，
-#    整个矩阵保守口径（跑满 max_epochs）约 1.66 天，实测表见 docs/progress.md §5。
+#    整个矩阵保守口径（跑满 max_epochs）约 1.66 天。
+#    ⚠️ M2.4 端到端复测后修正为约 **2.2 天**（39 ms/step，比纯计算慢 35%）——
+#    差额是取数、训练侧负采样与 CPU↔GPU 搬运，明细见 configs/scale.yaml 头部。
 # =============================================================
 
 output_dir: ./experiments
@@ -37,15 +39,24 @@ base:
 
 # ---------- E1 整体效果对比 ----------
 E1_overall:
-  scale: main              # 论文正文的正式数字：20% 用户 + 3 种子
+  scale: main              # 论文正文的正式数字：10% 用户 + 3 种子（2026-09-12 定稿）
   models:
+    # ⚠️【必须有】热度基线：本数据集在 1 正 + 100 均匀负采样下，一个完全不知道
+    # 用户是谁、只看物品全局热度的打分器就能拿到 hr@10 = 0.866 / ndcg@10 = 0.607
+    # （smoke 档实测），而模型是 0.920 / 0.716 —— 只高 6% / 18%。
+    # 成因：正样本必然是"用户交互过且交互数≥10"的物品（天然偏热门），
+    # 负样本从全池均匀抽（全池中位热度仅 288）。实测正/负热度均值差 24.7 倍。
+    # 不报这一行，等于把"热度先验"的功劳算给了序列建模。
+    # 证据与复现：scripts/diagnose_popularity_bias.py
+    # 实现：M2.7（与 itemcf/gru4rec 一起做，无需训练，秒级出结果）
+    - { name: popularity, impl: models/baselines/popularity.py, params: { freq_from: train } }
     - { name: itemcf,  impl: models/baselines/itemcf.py,  params: { topk_sim: 200 } }
     - { name: gru4rec, impl: models/baselines/gru4rec.py, params: { hidden_size: 64, num_layers: 1 } }
     - { name: sasrec,  impl: models/sasrec/model.py,      params: { use_multi_interest: false, use_content_fusion: false } }
     - { name: ours,    impl: models/multi_interest/model.py, params: { use_multi_interest: true, use_content_fusion: true } }
   test_set: full
   metrics: [hr@5, hr@10, ndcg@5, ndcg@10, mrr]
-  note: itemcf 无需训练；三个神经模型 x 3 种子 = 9 次训练
+  note: popularity 无需训练、itemcf 无需训练；三个神经模型 x 3 种子 = 9 次训练
 
 # ---------- E2 消融实验 ----------
 E2_ablation:
