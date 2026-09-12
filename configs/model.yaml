@@ -5,6 +5,12 @@
 # ⚠️ 改动任何超参后必须重跑受影响实验，详见 docs/dev-conventions.md
 # =============================================================
 
+# 训练规模档位（定义见 configs/scale.yaml）。命令行 --scale 优先级高于此处默认值。
+# 档位只决定 user_ratio / seeds / max_epochs / eval_every_n_epochs / eval_user_ratio；
+# 模型结构与训练超参（hidden_size、batch_size 等）【不随档位变化】，
+# 这样小档选出的超参才能直接拿到大档使用。
+scale: dev
+
 experiment_name: multi_interest_content_v1
 
 model:
@@ -34,19 +40,26 @@ train:
   weight_decay: 0.0
   optimizer: adam
   loss: bce                     # 二元交叉熵 + 负采样
-  epochs: 200
+  epochs: 200                   # 仅作上限；实际由 configs/scale.yaml 的 max_epochs 收紧
   early_stop_patience: 10
   early_stop_metric: ndcg@10
   grad_clip_norm: 5.0
   grad_accum_steps: 1
-  num_workers: 4
+  num_workers: 8                # 本机 16 逻辑核；4 个 worker 喂不满单卡，实测后可继续上调
   device: cuda
-  seed: 42
+  seed: 42                      # 单次训练的默认种子；多种子由 scale.yaml 的 seeds 列表驱动
+  amp: true                     # 混合精度：RTX 2060 为 Turing 架构，有 FP16 Tensor Core
+  amp_dtype: fp16               # 预期提速 1.5~2x；若出现 loss NaN / 梯度溢出再回退 fp32
 
 eval:
   protocol: leave_one_out_neg100  # 1 正 + 100 负
   ks: [5, 10]
   metrics: [hr, ndcg, mrr]
+  # 评估成本提醒：全量评估 = 1,306,691 用户 x 101 候选 ≈ 1.32 亿次打分，
+  # 与一个训练 epoch 同量级。若每轮都做全量评估，评估时间会超过训练时间。
+  every_n_epochs: 5             # 每 N 个 epoch 评估一次（最后一个 epoch 必定评估）
+  user_ratio: null              # null = 取 configs/scale.yaml 中该档位的 eval_user_ratio；
+                                # 同一档位内评估子集固定不变，保证跨 epoch 指标可比
   # 分题材与冷启动由 scripts/run_experiments.py 单独触发
 
 checkpoint:

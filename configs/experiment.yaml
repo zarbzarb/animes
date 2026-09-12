@@ -2,10 +2,20 @@
 # 实验分组配置 —— configs/experiment.yaml
 # 用法：python scripts/run_experiments.py --config configs/experiment.yaml --all
 # 设计依据：docs/evaluation-plan.md 第 6 节、docs/ablation-study.md 第 2 节
+#
+# ⚠️ 本文件【不写训练规模】。每个实验组用哪个档位由下面的 scale 字段指定，
+#    档位定义（user_ratio / seeds / max_epochs / 评估频率）见 configs/scale.yaml。
+#    原因：本机为 RTX 2060 6GB、纯本地无云算力，若全量跑完整个矩阵，
+#    训练次数约 230 次、总时长为「年」量级，毕设无法完成。
+#    分档 + 结果复用后可压到约 15 次训练。
 # =============================================================
 
 output_dir: ./experiments
-seeds: [42, 2024, 2025]     # 三种子取平均
+
+# 随机种子：默认由 configs/scale.yaml 的档位提供，null 表示"不覆盖档位设置"。
+# 策略：只有最终模型（main 档）跑 3 个种子并报均值±标准差，
+#       基线与消融组单种子 —— 种子数是对结论影响最小、最省时间的取舍项。
+seeds: null
 report_mean_std: true
 
 # ---------- 基线配置：所有实验组共享，禁止随意改动 ----------
@@ -17,12 +27,14 @@ base:
   dropout: 0.2
   batch_size: 256
   lr: 0.001
-  epochs: 200
+  epochs: 200              # 仅作上限，实际由档位的 max_epochs 收紧
   early_stop_patience: 10
   neg_sample_num: 100
+  amp: true                # 混合精度，说明见 configs/model.yaml
 
 # ---------- E1 整体效果对比 ----------
 E1_overall:
+  scale: main              # 论文正文的正式数字：20% 用户 + 3 种子
   models:
     - { name: itemcf,  impl: models/baselines/itemcf.py,  params: { topk_sim: 200 } }
     - { name: gru4rec, impl: models/baselines/gru4rec.py, params: { hidden_size: 64, num_layers: 1 } }
@@ -30,9 +42,11 @@ E1_overall:
     - { name: ours,    impl: models/multi_interest/model.py, params: { use_multi_interest: true, use_content_fusion: true } }
   test_set: full
   metrics: [hr@5, hr@10, ndcg@5, ndcg@10, mrr]
+  note: itemcf 无需训练；三个神经模型 x 3 种子 = 9 次训练
 
 # ---------- E2 消融实验 ----------
 E2_ablation:
+  scale: dev               # 先在开发档定结论，最终确认时用 E1 的 main 档结果复核
   groups:
     E2_1_pure_sasrec:      { use_multi_interest: false, use_content_fusion: false }
     E2_2_multi_interest:   { use_multi_interest: true,  use_content_fusion: false, num_interests: 4 }
@@ -41,9 +55,17 @@ E2_ablation:
   test_set: full
   metrics: [hr@5, hr@10, ndcg@5, ndcg@10]
   report_params: true          # 报告参数量，证明增益不来自参数增长
+  # 复用规则（省训练次数的关键）：
+  #   E2_1 pure_sasrec 直接复用 E1 的 sasrec
+  #   E2_4 full        直接复用 E1 的 ours
+  # 于是只有 E2_2 / E2_3 需要新训练 => 2 组 x 1 种子 = 2 次
+  reuse_from:
+    E2_1_pure_sasrec: E1_overall.sasrec
+    E2_4_full:        E1_overall.ours
 
 # ---------- E3 冷启动专项 ----------
 E3_coldstart:
+  scale: dev
   models:
     - { name: pure_sasrec,  cfg: { use_multi_interest: false, use_content_fusion: false } }
     - { name: ours_w03,     cfg: { use_multi_interest: true,  use_content_fusion: true, w_content_cold: 0.3 } }
@@ -51,6 +73,8 @@ E3_coldstart:
   test_set: cold_start_subset   # 正样本交互数 < 10
   metrics: [hr@10, ndcg@10]
   require_absent_in_train: true # 训练集必须不可见，否则实验无效
+  reuse_from:
+    pure_sasrec: E2_ablation.E2_1_pure_sasrec
 
 # ---------- E4 分题材指标 ----------
 E4_by_genre:
@@ -59,10 +83,20 @@ E4_by_genre:
   group_by: primary_genre
   metrics: [recall@10]
   highlight_genres: [8, 12, 5, 11]   # 小众题材：运动/后宫/悬疑/音乐
+  min_scale_ratio: 0.20         # ⚠️ 本组实验不可用 dev / smoke 档：
+                                #    运动竞技 743 条、后宫福利 837 条在 5% 抽样下
+                                #    只剩三四十条，分题材指标不具统计意义。
 
 # ---------- 超参搜索 ----------
 HPO:
   enabled: true
+  scale: smoke                 # 粗搜只在冒烟档跑，几分钟一组
+  seeds: [42]                  # 粗搜单种子
+  coarse_grid_size: 8          # 粗搜最多评估的组合数
+                               # （原设计无上限：60 组 x 3 种子 = 180 次训练，
+                               #   占全部训练次数的近八成，是本项目最大的时间黑洞）
+  refine_scale: dev            # 粗搜选出的前 K 组，再到开发档细搜
+  refine_top_k: 3
   params:
     hidden_size: [32, 64, 128]
     num_layers: [1, 2, 3]
@@ -75,6 +109,7 @@ HPO:
 
 # ---------- 补充实验 ----------
 extra:
+  scale: dev
   k_sensitivity:                 # 兴趣数敏感性
     num_interests: [2, 4, 6, 8]
     metrics: [ndcg@10, recall@10]
