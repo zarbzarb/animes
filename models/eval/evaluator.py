@@ -56,9 +56,11 @@ from models.eval.metrics import ranking_metrics
 
 __all__ = [
     "EvalData",
+    "build_eval_data",
     "collect_ranks",
     "evaluate",
     "evaluate_grouped",
+    "evaluate_cold_start",
     "find_leaked_mask",
     "drop_leaked_samples",
 ]
@@ -184,6 +186,106 @@ def drop_leaked_samples(data: EvalData) -> tuple:
         return data, 0
     kept = data.subset(~mask, label=data.label)
     return kept, n
+
+
+# =====================================================================
+# 评估数据组装（把「负采样 + 输入序列 + 正样本」串起来）
+# =====================================================================
+def build_eval_data(
+    train_seqs,
+    user_rows,
+    n_items: int,
+    split: str = "val",
+    val_items=None,
+    test_items=None,
+    max_seq_len: int = 50,
+    n_negatives: int = 100,
+    seed: int = None,
+    strip_items=None,
+    pool=None,
+    genres=None,
+    label: Optional[str] = None,
+) -> EvalData:
+    """把三个「唯一实现」拼成一个可以直接喂给 `evaluate()` 的 `EvalData`。
+
+    组装规则的唯一落点。此前这段逻辑散落在 `scripts/verify_eval_stack.py`
+    里，M2.4 要训练、M2.8 要跑实验矩阵都会需要它，所以固化到这里，
+    避免出现"三个脚本各拼一遍、某天有人只改了其中一处"。
+
+    ⚠️ `scripts/verify_eval_stack.py` **有意不复用本函数** ——
+    验收脚本的价值在于"不信任任何报告、独立重算"，让它调用被验收的代码
+    等于自己给自己打分。这是一处**有理由的重复**，不是遗漏。
+
+    参数
+    ----
+    train_seqs  按下标可取到用户训练序列的对象（`seq_dataset.pkl` 的 train）。
+    user_rows   `(N,)` 要评估的用户行号。
+    n_items     物品池规模，用于负采样索引上界。
+    split       `"val"` 或 `"test"`。
+                `"val"`  → 输入 = train，正样本 = `val_items`
+                `"test"` → 输入 = train + val，正样本 = `test_items`
+                （两种切分的口径见 `dataset.build_eval_inputs`）
+    val_items   `(N,)` val 目标池内索引。**两种 split 都必须传**：
+                test 时它要进历史序列。
+    test_items  `(N,)` test 目标池内索引，`split="test"` 时必填。
+    max_seq_len 完整序列上限，实际输入长度 = `max_seq_len - 2`。
+    n_negatives 每样本负样本数。**评估侧恒为 100**，改则指标不可比。
+    seed        负采样种子，与阶段一口径一致（默认见 negatives.DEFAULT_NEG_SEED）。
+    strip_items E3 冷启动：要从序列中剥离的新番池内索引。
+    pool        负样本候选池（冷启动时限定为新番）。
+    genres      `(N,)` 目标物品题材标签，供 E4 分题材评估。
+    label       指标报告里的标签。
+
+    返回
+    ----
+    `EvalData`。注意 **不做泄漏剔除** —— 剔除由调用方显式调
+    `drop_leaked_samples()`，这样"剔了多少条"一定会被看见并上报。
+    """
+    from models.data.negatives import DEFAULT_NEG_SEED, sample_negatives
+    from models.sasrec.dataset import build_eval_inputs
+
+    rows = np.asarray(user_rows, dtype=np.int64).reshape(-1)
+    n = int(rows.size)
+
+    # ---------- 正样本 ----------
+    if split == "val":
+        if val_items is None:
+            raise ValueError("split='val' 必须提供 val_items（它就是正样本）")
+        pos = np.asarray(val_items, dtype=np.int64).reshape(-1)
+    elif split == "test":
+        if val_items is None:
+            raise ValueError("split='test' 必须提供 val_items（它要进历史序列）")
+        if test_items is None:
+            raise ValueError("split='test' 必须提供 test_items（它就是正样本）")
+        pos = np.asarray(test_items, dtype=np.int64).reshape(-1)
+    else:
+        raise ValueError(f"split 只能是 'val' / 'test'，收到 {split!r}")
+
+    if pos.shape != (n,):
+        raise ValueError(f"正样本长度 {pos.shape} 与 user_rows {n} 不一致")
+
+    # ---------- 输入序列 ----------
+    x = build_eval_inputs(
+        train_seqs, rows, max_seq_len=max_seq_len, split=split,
+        val_items=(None if val_items is None
+                   else np.asarray(val_items, dtype=np.int64).reshape(-1)),
+        test_items=(None if test_items is None
+                    else np.asarray(test_items, dtype=np.int64).reshape(-1)),
+        strip_items=strip_items, n_items=n_items,
+    )
+
+    # ---------- 负样本 ----------
+    neg = sample_negatives(
+        rows, pos, n_items, n_negatives=int(n_negatives),
+        seed=(DEFAULT_NEG_SEED if seed is None else int(seed)),
+        pool=pool, train_seqs=train_seqs,
+    )
+
+    return EvalData(
+        input_ids=x, positives=pos, negatives=neg.negatives,
+        user_rows=rows, genres=genres,
+        label=label if label is not None else f"{split}_neg{int(n_negatives)}",
+    )
 
 
 # =====================================================================

@@ -19,6 +19,7 @@
 
 from models.eval.evaluator import (  # noqa: F401
     EvalData,
+    build_eval_data,
     collect_ranks,
     drop_leaked_samples,
     evaluate,
@@ -49,6 +50,7 @@ __all__ = [
     "topk_indices",
     # 评估循环
     "EvalData",
+    "build_eval_data",
     "collect_ranks",
     "evaluate",
     "evaluate_grouped",
