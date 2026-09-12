@@ -62,10 +62,13 @@ E1_overall:
 E2_ablation:
   scale: dev               # 先在开发档定结论，最终确认时用 E1 的 main 档结果复核
   groups:
-    E2_1_pure_sasrec:      { use_multi_interest: false, use_content_fusion: false }
-    E2_2_multi_interest:   { use_multi_interest: true,  use_content_fusion: false, num_interests: 4 }
-    E2_3_content_fusion:   { use_multi_interest: false, use_content_fusion: true,  w_behavior: 0.7, w_content: 0.3 }
-    E2_4_full:             { use_multi_interest: true,  use_content_fusion: true,  num_interests: 4, w_behavior: 0.7, w_content: 0.3 }
+    # 2026-09-12 更新：组开关从早期占位的 use_multi_interest/use_content_fusion
+    # 改为已落地的 arch 开关（scripts/train.py --model）。content_fusion 属
+    # M2.6，落地前 E2_3/E2_4 无法跑，先跑 E2_1 / E2_2。
+    E2_1_pure_sasrec:      { arch: sasrec }                     # 复用 E1 sasrec，无需新训练
+    E2_2_multi_interest:   { arch: multi_interest, num_interests: 4 }   # M2.5
+    E2_3_content_fusion:   { arch: sasrec,          w_behavior: 0.7, w_content: 0.3 }   # 待 M2.6
+    E2_4_full:             { arch: multi_interest,  num_interests: 4, w_behavior: 0.7, w_content: 0.3 }  # 待 M2.6
   test_set: full
   metrics: [hr@5, hr@10, ndcg@5, ndcg@10]
   report_params: true          # 报告参数量，证明增益不来自参数增长

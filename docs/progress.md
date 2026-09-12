@@ -1,6 +1,6 @@
 # 项目进度总览 · AniRec
 
-> **快照时间**：2026-09-12 18:05 ｜ **最新完成里程碑**：**M2.4 SASRec 基座（训练循环打通，val NDCG 显著优于随机）** ｜ **下一里程碑**：M2.5 多兴趣胶囊
+> **快照时间**：2026-09-12 19:55 ｜ **最新完成里程碑**：**M2.5 多兴趣胶囊（动态路由打通，debug 档与基线同预算对照完成）** ｜ **下一里程碑**：M2.6 内容融合
 > **当前提交**：以 `git log -1 --oneline` 为准（本文档不写死哈希，避免每次提交后过期）
 >
 > 本文件只回答三个问题：**做到哪了**（§1–2）／**环境撑不撑得住**（§3）／**下一步做什么**（§4–5）。
@@ -14,7 +14,7 @@
 |---|---|---|---|
 | 阶段 0　项目初始化 | — | ✅ 完成 | 目录骨架 + 14 份设计文档 + GitHub 仓库（`zarbzarb/animes`） |
 | **阶段 1　数据预处理与数据集构建** | 15% | ✅ **完成并通过验收** | 7 个脚本 + 全部数据产物 + 8 条实测口径，验收 31/31 |
-| 阶段 2　核心算法与对比实验 | 35% | 🔵 **进行中 60%** | **M2.0 ~ M2.4 全部完成**：GPU 可用（RTX 2060 / 驱动 616.92 / torch 2.14.0+cu130）；SASRec 基座跑通（smoke 档 val ndcg@10 **0.716**，随机基线 0.045）；端到端 **17.6 s/epoch**；⚠️ 发现热度先验主导指标（须加 popularity 基线）；下一步 M2.5 多兴趣胶囊 |
+| 阶段 2　核心算法与对比实验 | 35% | 🔵 **进行中 70%** | **M2.0 ~ M2.5 全部完成**：GPU 可用；SASRec 基座跑通（smoke 档 val ndcg@10 **0.716**，随机基线 0.045）；lr 重标定定稿 0.001；多兴趣胶囊跑通（K=4 动态路由，debug 同预算对照 0.7624 vs 0.7871，正式对比留 dev 档）；⚠️ 发现热度先验主导指标（须加 popularity 基线）；下一步 M2.6 内容融合 |
 | 阶段 3　全栈系统与联调 | 35% | ⬜ 未开始 | 依赖阶段 2 的模型权重与嵌入矩阵 |
 | 阶段 4　测试 | 15% | ⬜ 未开始 | 依赖阶段 3 的可运行系统 |
 
@@ -209,13 +209,13 @@ Windows 因哈希不符拒绝加载 → 设备 Code 52 → CUDA 报告无设备�
 | **M2.2** ✅ | 评估器 | 1 正 + 100 负候选，确定性负采样；支持全量 / 分题材 / 冷启动三种切分 | `models/eval/evaluator.py`、`models/data/negatives.py`、`tests/test_eval/` | ✅ **已完成**：单测 22/22；验收 C/D/E 组全过；随机打分器 HR@10 实测 0.1023（期望 0.0990±0.0064，评估链路无偏） |
 | **M2.3** ✅ | 滑动窗口 Dataset | 按 `max_len=50` 在线生成样本，不落盘（输入上限 48） | `models/sasrec/dataset.py`、`tests/test_sasrec/` | ✅ **已完成**：单测 29/29；验收 B 组在真实数据（最长序列 8,917）上通过因果性验证 |
 | **M2.4** ✅ | SASRec 基座 | 2 层 2 头 hidden 64 dropout 0.2 + BCE 负采样 + 早停（看 val NDCG@10, patience=10） | `models/sasrec/{model,config,train}.py`、`models/checkpoint/`、`scripts/train.py` | ✅ **已完成**：smoke 档 loss 0.66→0.20 稳定下降，val ndcg@10 **0.716**（随机基线 0.045）；复评与记录**逐位一致**；端到端 **17.6 s/epoch**。⚠️ **附带发现热度先验主导指标**（见 §4.2） |
-| **M2.5** | 多兴趣胶囊 | K=4 动态路由（3 次迭代）接在 SASRec 输出后；记录胶囊两两余弦相似度检测塌缩 | `models/multi_interest/{capsule,model,train}.py` | 4 个胶囊不塌缩（相似度 < 0.7，配置里已有告警阈值） |
+| **M2.5** ✅ | 多兴趣胶囊 | K=4 动态路由（3 次迭代）接在 SASRec 输出后；记录胶囊两两余弦相似度检测塌缩 | `models/multi_interest/{config,capsule,model}.py` | ✅ **已完成**：全仓 318 例全绿（新增 42）；debug 档 8 epoch 固定预算 val ndcg@10 **0.7624**（基线同预算 0.7871，路由未收敛属预期）；相似度 0.699（阈值 <0.7 边缘达标，无死胶囊）；新增参数恰好 +16,384（=路由 W）。⚠️ 发现并修复 **squash 与 0.02² 初始化的量级冲突**（见 §4.1 M2.5） |
 | **M2.6** | 内容融合 | 候选侧拼接 + 排序侧 7:3 加权；冷启动样本权重切 5:5 | `models/content_encoder/fusion.py` | `fusion_score()` 签名与 `project-structure.md` 契约一致 |
 | **M2.7** | 对比基线 | ItemCF（共现 + 余弦，TopK 200 邻居）、GRU4Rec（隐藏 64，1 层） | `models/baselines/*.py` | 与本文模型**共用同一划分 / 负样本池 / 评估器 / 早停策略** |
 | **M2.8** | 实验编排 | `run_experiments.py` 按 `configs/experiment.yaml` 串起 E1~E4，落盘 `experiments/{id}/`，回写 `result-analysis.md` | `scripts/run_experiments.py`、`scripts/plot_results.py` | 一次命令跑完四组；输出目录结构与 `evaluation-plan.md` 8.2 一致 |
 | **M2.9** | 填表与作图 | 真实指标填入 `result-analysis.md` / `ablation-study.md`，生成 4 张图 | 指标表 + `figures/*.png` | **每个数字都有出处（实验目录名）**，无出处不许填 |
 
-推荐执行顺序即上表自上而下。**M2.0–M2.4 均已完成，下一步从 M2.5（多兴趣胶囊）开始**，环境已无阻塞。
+推荐执行顺序即上表自上而下。**M2.0–M2.5 均已完成，下一步从 M2.6（内容融合）开始**，环境已无阻塞。
 
 ### 4.1 已完成里程碑记录
 
@@ -342,6 +342,33 @@ Windows 因哈希不符拒绝加载 → 设备 Code 52 → CUDA 报告无设备�
 > **派生字段**，早期 `load_model_from_checkpoint` 直接 `SASRecConfig(**cfg_dict)`
 > 展开，导致**任何** checkpoint 都加载失败（TypeError）。现改走
 > `SASRecConfig.from_dict()` 只取 dataclass 认得字段，并加了回归测试。
+
+#### M2.5 多兴趣胶囊 ✅（2026-09-12）
+
+| 项 | 内容 |
+|---|---|
+| 交付 | `models/multi_interest/{config,capsule,model}.py`：MIND 式动态路由（K=4、3 次迭代、softmax 在胶囊维、PAD 票数置零），复用 SASRec 编码主干；`scripts/train.py --model sasrec\|multi_interest` 切换；checkpoint 按 `meta["arch"]` 自动重建 |
+| 测试 | 新增 42 例（路由 20 / 模型 22），**全仓 318 例全绿**（原 276 + 42） |
+| 对照 | debug 档 8 epoch 固定预算、seed 42、同评估集：MI **ndcg@10 = 0.7624** vs SASRec 0.7871（−2.5pp）；loss 0.1525 vs 0.1291。⚠️ 这是**同预算快照不是结论**：两组到 ep8 都未收敛，MI 的路由需要更多轮次分化，E2 的正式对比在 dev 档跑满 30 epoch + 早停 |
+| 塌缩诊断 | 兴趣两两余弦相似度 **0.699**（阈值 <0.7，边缘达标）；4 个胶囊全部在被使用（max 选中占比 10%/22%/61%/7%，无死胶囊），但主胶囊偏强，dev 档长预算下需复查 |
+| 开销 | 87 s/epoch vs 基线 71 s（**+22%**，路由迭代 + 第 5 个 einsum 的代价）；参数 +16,384（恰好 = 64×4×64 路由 W） |
+| 复现 | `python scripts/train.py --scale debug --model multi_interest --seed 42 --epochs 8 --no-final-eval --tag m2_5_mi`（约 11 分钟） |
+
+**M2.5 两条实测发现：**
+
+1. ⚠️ **squash 与 0.02² 初始化存在量级冲突（已修，勿回退）**。
+   squash 把兴趣向量范数压进 (0,1]，而 item_emb 按论文口径 N(0,0.02²)
+   初始化（H=64 范数仅 ~0.16），点积量级 |score|≤0.008；基线 user_repr 是
+   LayerNorm 输出（范数≈√H），logits ~0.3。不修正的话 BCE 在线性区学习极慢
+   （玩具任务 10 epoch 才 0.693→0.566），**同样 lr/epochs 下多兴趣模型会系统性
+   欠收敛，E2 会把"训练预算不足"误判成"多兴趣没用"**。修复：打分时
+   `interests × sqrt(H)`（与基座 scale_emb 同一条惯例；MIND 原实现无此步
+   是因为它的嵌入初始化范数≈1）。正数缩放不改评估排序，只改训练 loss 动态。
+   详见 `models/multi_interest/README.md`。
+
+2. **softmax 维度是 MIND 与部分开源实现的分歧点**：论文口径 softmax 在
+   **胶囊维 j**（每个位置的票在 K 个兴趣间分配），不是位置维 i。capsule.py
+   docstring 已写死该口径，改则与 MIND 不可比。
 
 
 ---
