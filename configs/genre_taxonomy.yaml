@@ -1,0 +1,116 @@
+# =============================================================
+# 题材体系（Genre Taxonomy）—— configs/genre_taxonomy.yaml
+#
+# 唯一事实来源：动漫题材的分类口径。
+# 消费者：scripts/preprocess.py（建库）、后续 A1 画像 / A2 召回 / A4 排序（兴趣胶囊打标）
+#
+# 上游数据：dataset/id_to_genreids.json —— animeID(str) -> [genre_id, ...]
+#   genre_id 取值域 1..21，语义由 mal_genres 定义。
+#   该对应关系经「动漫集合 Jaccard 重叠」严格推导，21 个 id 全部 jaccard = 1.0000，
+#   即 id 与题材名一一对应、无歧义（推导日志见 logs/probe_stage1c.txt）。
+# =============================================================
+
+version: 1
+
+# ---------- 21 类 MAL 主题材 id -> 英文名 ----------
+mal_genres:
+  1: Adventure
+  2: Award Winning
+  3: Drama
+  4: Fantasy
+  5: Romance
+  6: Supernatural
+  7: Suspense
+  8: Action
+  9: Comedy
+  10: Sci-Fi
+  11: Mystery
+  12: Slice of Life
+  13: Horror
+  14: Ecchi
+  15: Avant Garde
+  16: Sports
+  17: Girls Love
+  18: Boys Love
+  19: Gourmet
+  20: Erotica
+  21: Hentai
+
+# ---------- 归并为 12 类中文题材 ----------
+# is_primary 说明：一部动漫常有多个题材，分题材实验（E4）需要唯一主标签。
+# 采用「特定优先」原则：越具体的题材优先级越高，避免小众番被 Comedy/Action 这类
+# 泛题材吞掉——否则会系统性低估小众题材的召回，直接破坏 H3 假设的检验效力。
+genres_12:
+  1:
+    name_cn: 热血战斗
+    mal_ids: [8]
+  2:
+    name_cn: 冒险奇幻
+    mal_ids: [1, 4]
+  3:
+    name_cn: 日常治愈
+    mal_ids: [12, 19]
+  4:
+    name_cn: 恋爱校园
+    mal_ids: [5, 17, 18]
+  5:
+    name_cn: 悬疑推理
+    mal_ids: [11, 7]
+  6:
+    name_cn: 科幻机战
+    mal_ids: [10]
+  7:
+    name_cn: 喜剧搞笑
+    mal_ids: [9]
+  8:
+    name_cn: 运动竞技
+    mal_ids: [16]
+  9:
+    name_cn: 超自然灵异
+    mal_ids: [6, 13]
+  10:
+    name_cn: 剧情文艺
+    mal_ids: [3, 2, 15]
+  11:
+    name_cn: 青春音乐
+    mal_ids: []          # 21 类里没有 Music，靠 genres_detailed 关键词判定
+    by_detailed_tags: true
+  12:
+    name_cn: 后宫福利
+    mal_ids: [14]
+
+# ---------- 主标签优先级（从高到低，数字越小越优先）----------
+# 小众题材排在前面：明确、小众的定位优先于宽泛的泛题材。
+primary_priority: [11, 8, 12, 5, 6, 9, 3, 4, 2, 1, 10, 7]
+
+# ---------- 「青春音乐」的细分标签关键词 ----------
+# 在 animes.csv 的 genres_detailed（全小写英文短语）中做【词边界】匹配。
+#
+# 为什么不直接用 "music"：语料里带 "music" 标签的动漫有 3,616 部，但其中 2,339 部
+# 只是配乐出色（Cowboy Bebop / Samurai Champloo / Initial D …），并非音乐番。
+# 因此改用「表演性」强信号词，实测命中约 2,100 部，语义准确度显著更高。
+#
+# 为什么要词边界：子串匹配会让 "contraband" 命中 "band"、"crossdressing" 命中 "sing"。
+music_keywords:
+  - idol
+  - idols
+  - band
+  - bands
+  - musical
+  - singer
+  - singing
+  - concert
+  - orchestra
+  - music school
+  - solo singer
+  - rock music
+  - classical music
+  - heavy metal
+  - jazz music
+  - techno music
+  - hip-hop music
+
+# ---------- 合规剔除 ----------
+# 这些题材的动漫一律不进入推荐池与全部实验（论文「伦理与合规」节引用此处）
+forbidden_genre_ids: [20, 21]        # Erotica / Hentai
+forbidden_names: [Erotica, Hentai]

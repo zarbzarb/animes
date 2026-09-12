@@ -2,14 +2,27 @@
 # 数据预处理参数 —— configs/data.yaml
 # 用法：python scripts/preprocess.py --config configs/data.yaml
 # 口径必须与 docs/evaluation-plan.md 第 2 节一致
+#
+# ⚠️ 本文件的口径是【逐条实测】得出的，不是照抄 rq.md。
+#    改动任何一项都会使数据集与现有实验不可比，必须记录到
+#    experiments/SPLIT_CHANGELOG.md。
 # =============================================================
 
 input:
   anime_meta: ./dataset/animes.csv
-  ratings: ./dataset/ratings.csv
+  # 权威交互源：实测 dataset.pkl 由 ratings.npy 口径构建（集合复现率 100%）
+  # ratings.csv 与 ratings.dat 完全相同，但相对 npy 存在整体 +1 评分偏移
+  # （1500 用户抽样：5.34% 评分单元不同、0.90% 跨 6/7 边界翻转，集合复现率仅 90.7%）
+  # 明细见 data/processed/dataset_source_verdict.json
+  ratings_authoritative: ./dataset/ratings.npy
+  ratings: ./dataset/ratings.csv          # 仅作对照参考
+  ratings_dat: ./dataset/ratings.dat      # 仅作对照参考
   genre_map: ./dataset/id_to_genreids.json
+  genre_taxonomy: ./configs/genre_taxonomy.yaml
   dataset_pkl: ./dataset/dataset.pkl
   neg_sample_pkl: ./dataset/random-sample_size100-seed98765.pkl
+  # ⚠️ 注意：pretrained_bert.pth 不是内容编码器（是 BERT4Rec 式序列模型检查点），
+  #    已不用于内容特征。内容编码器权重在 models/content_encoder/pretrained/
   pretrained_bert: ./dataset/pretrained_bert.pth
 
 output:
@@ -20,42 +33,64 @@ output:
   faiss_index_file: faiss.index
   item_emb_file: item_emb.npy
 
+# ---------- 正样本判定 ----------
+# 实测：dataset.pkl 的正样本 = rating >= 7（评分 1~6 全部丢弃、7~10 全部保留，无例外）
+positive:
+  rating_threshold: 7
+
 # ---------- 过滤规则 ----------
+# 实测两处与早期文档不符，已更正：用户阈值是 >=10（非 <5），物品阈值是 >=10
 filter:
-  min_user_interactions: 5     # 交互数 < 5 的用户剔除
-  min_item_interactions: 10    # 交互数 < 10 的物品剔除
-  drop_forbidden_genres: true  # 剔除 Hentai / Erotica
-  min_year: 1960               # 过滤异常年份
-  require_valid_rating: true   # rating 为空则丢弃
+  min_user_positive: 10       # 正样本交互数 < 10 的用户剔除 → 1,306,691 用户
+  min_item_positive: 10       # 正样本交互数 < 10 的物品剔除 → 15,687 物品
+  drop_forbidden_genres: true # Hentai/Erotica：在候选池与评估阶段屏蔽（不改动 pkl 切分）
+  require_valid_rating: true  # rating 缺失则丢弃
+  min_year: 1960              # 过滤异常年份
 
 # ---------- 序列构造 ----------
+# 原始交互文件【没有时间戳】，顺序唯一口径来自 dataset.pkl
 sequence:
   max_len: 50                  # 最大序列长度（与模型一致）
   split: leave_one_out         # 留一法：倒数1=test, 倒数2=val, 其余=train
-  sort_by: timestamp           # 按时间戳升序
+  order_source: dataset_pkl    # 非 timestamp：原始数据无时间戳字段
+  sort_by: dataset_pkl_order
   pad_value: 0
-  min_seq_len: 5               # 序列长度不足则丢弃该用户
+  min_seq_len: 5
 
 # ---------- 负采样 ----------
 negative_sampling:
   num_negatives: 100           # 每用户负样本数
   seed: 98765
-  strategy: random             # random（与现有 neg_sample_pkl 口径一致）
+  strategy: random             # 与现有 neg_sample_pkl 口径一致
   exclude_positive: true
   exclude_train_items: true
 
 # ---------- 内容特征 ----------
+# animes.csv 无剧情简介字段，故 text_fields 不含 summary
 content_feature:
-  text_fields: [title, genres_cn, summary]   # 拼接顺序
-  max_text_len: 160
+  text_fields: [title, alternative_title, genres_cn, genres_detailed]
+  detailed_tag_budget: 24      # 细分标签最多取前 N 个
+  model_name: distilbert-base-multilingual-cased
+  model_dir: ./models/content_encoder/pretrained/distilbert-base-multilingual-cased
+  pooled: cls
+  hidden_size: 768
   vec_dim: 512
-  batch_size: 256
+  reduce: pca                  # pca / random / none
+  max_text_len: 128
+  batch_size: 64
   normalize: true
 
 # ---------- 冷启动子集 ----------
+# 池内物品在训练集中至少出现 6 次，「交互数 < 10」会得到空集，
+# 本数据集【不存在】严格意义的物品冷启动，故用 holdout 模拟口径。
 cold_start:
-  threshold: 10                # 交互数 < 10 视为新番
+  mode: holdout                # holdout（按年份整体留出）| longtail（按交互数分位）
+  min_year: 2021               # holdout 口径：年份 >= 2021 的动漫全部从训练集剥离
+                               # 实测 2,783 物品 / 209,912 测试样本 / 剥离 14.07% 训练交互
+                               # 调低会在增大样本量的同时快速放大训练信号损失（2018 年 -> 32%）
+  quantile: 0.20               # longtail 口径备用：长尾后 20%（3,200 物品 / 446 样本 / 剥离 0.06%）
   require_absent_in_train: true  # 训练集中必须不可见（否则实验无效）
+  negatives_from_new_items_only: true  # 负样本池限定为新番，避免靠热度区分
   min_test_samples: 5000       # 目标样本量下限，不足则告警
   output: cold_start_subset.pkl
 

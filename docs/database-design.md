@@ -127,7 +127,10 @@ CREATE TABLE `anime` (
 ```
 
 **数据来源**：`dataset/animes.csv`（20,237 行）→ `scripts/import_anime_meta.py` 导入。
-**清洗规则**：`genres` 含 `Hentai` / `Erotica` 的 1,675 条记录 → `is_forbidden=1`，不进入推荐池。
+**清洗规则**：`genres` 含 `Hentai` / `Erotica` 的 1,675 条记录 → `is_forbidden=1`。
+其中 **1,551 条实际存在于 `dataset.pkl` 的推荐池内**（实测，见 `docs/evaluation-plan.md` 第十节），
+因此 `is_forbidden=1` 的语义是「在候选池与评估阶段屏蔽」，而非「数据集中不存在」。
+`scripts/preprocess.py` 会输出屏蔽清单 `compliance.forbidden_item_indices` 供审计。
 
 ### 3.3 `genre` —— 题材表（12 类）
 
@@ -161,7 +164,9 @@ CREATE TABLE `genre` (
 | 11 | 青春音乐 | Music-Idol | （MAL 无对应，由细分标签 music/idol 判定）|
 | 12 | 后宫福利 | Ecchi-Harem | Ecchi |
 
-> 映射依据 `dataset/id_to_genreids.json`（21 类 MAL 主题材）与 `genres_detailed` 细分标签。**Hentai / Erotica 不映射为任何题材，直接剔除。**
+> 映射依据 `dataset/id_to_genreids.json`（21 类 MAL 主题材）与 `genres_detailed` 细分标签。
+> 口径定义在 `configs/genre_taxonomy.yaml`。**Hentai / Erotica 不映射为任何 12 类题材**，
+> 故池内有 1,248 个物品的题材标签为空——它们同时在候选池中被屏蔽。
 
 ### 3.4 `anime_genre` —— 动漫-题材关联表
 
@@ -696,7 +701,15 @@ def offline_recommend_batch(batch_id: str):
 ## 九、初始化脚本速查
 
 ```bash
-# 建库建表 + 初始化 12 类题材 + 10 个 Agent 状态
+# ---------- Step 0. 离线数据准备（阶段一产物，与数据库无关）----------
+python scripts/preprocess.py                 # -> data/processed/{seq_dataset.pkl, *_stats.parquet, *_report.json}
+python scripts/download_content_encoder.py   # -> models/content_encoder/pretrained/（约 520MB，不入库）
+python scripts/build_content_vectors.py --dim 512 --reduce pca   # -> data/features/content_vec_512*.npy
+python scripts/build_cold_start_subset.py --mode holdout --min-year 2021
+# 口径存疑时的取证脚本（可随时重跑，结论落盘）
+python scripts/diagnose_dataset_source.py    # -> data/processed/dataset_source_verdict.json
+
+# ---------- Step 1. 建库建表 + 初始化 12 类题材 + 10 个 Agent 状态 ----------
 python scripts/init_db.py --create-schema --seed-genre --seed-agent
 
 # 导入动漫元数据（约 2 万行）
@@ -706,10 +719,10 @@ python scripts/import_anime_meta.py --src dataset/animes.csv
 python scripts/build_anime_genre.py --genre-map dataset/id_to_genreids.json
 
 # 导入采样用户与追番记录
-python scripts/import_ratings.py --src dataset/ratings.csv --sample-users 100000
+#   ⚠️ 必须用 ratings.npy：ratings.csv/.dat 与它口径不同（整体 +1 偏移，跨 6/7 边界翻转）
+python scripts/import_ratings.py --src dataset/ratings.npy --sample-users 100000
 
 # 生成内容向量并建 FAISS 索引
-python scripts/build_content_vectors.py
 python scripts/build_faiss_index.py
 
 # 全量重算画像与胶囊
