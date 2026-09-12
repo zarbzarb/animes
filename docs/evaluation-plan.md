@@ -366,15 +366,20 @@ python scripts/run_stage1.py --list          # 列出步骤、依赖、产物与
 
 ### 3.1 硬件与软件
 
-| 项 | 配置 |
-|---|---|
-| 操作系统 | Windows 11 / Ubuntu 22.04（两端均验证） |
-| CPU | Intel i7-12700 / AMD R7 5800X 及以上 |
-| GPU | NVIDIA RTX 3090 24GB（训练）／ RTX 4060 8GB（可跑小批量） |
-| 内存 | 32 GB |
-| Python | 3.10 / 3.11 |
-| PyTorch | 2.1 – 2.5（CUDA 12.1） |
-| 关键库 | numpy 1.26, pandas 2.1, transformers 4.40, faiss-cpu 1.8 |
+> ⚠️ **下表为实测值**（2026-09-12 核对）。早期版本写的是「RTX 3090 24GB / 双端验证」，与实际不符，已更正。
+> 本机**没有** CUDA 版 PyTorch：`torch.cuda.is_available() == False`，是阶段 2 的开工阻塞项，
+> 详见 [progress.md](progress.md) §3.3 与 §6 的路线选项。
+
+| 项 | 实测配置 | 备注 |
+|---|---|---|
+| 操作系统 | Windows（内核 10.0.26200 / DisplayVersion 25H2） | Linux 端**未验证** |
+| CPU | Intel 16 逻辑核 | — |
+| GPU | **NVIDIA RTX 2060 / 6 GB / 驱动 457.85（CUDA 11.1）** | 驱动偏旧：CUDA 11.x 需 ≥ 452.39、CUDA 12.x 需 ≥ 527.41 |
+| 内存 | 31.7 GB | 加载 `ratings.npy`（6.9 GB）前建议先释放内存 |
+| 磁盘 | F: 余 66 GB | 充足 |
+| Python | 3.11.16（conda env `py3_11`） | `E:\tools\anaconda\envs\py3_11\python.exe` |
+| PyTorch | 2.14.0 **+cpu** ⚠️ | 需按 progress.md §6 D1 换装 CUDA 轮子 |
+| 关键库 | numpy 2.4.6, pandas 2.3.3, transformers 4.57.1, scikit-learn 1.9.0 | faiss 未安装（阶段 2 可先用 numpy 精确内积） |
 
 ### 3.2 环境固化
 
@@ -385,6 +390,8 @@ pip freeze > experiments/{exp_id}/requirements_freeze.txt
 ```
 
 每次实验输出目录必须包含 `requirements_freeze.txt` 与 `git commit hash`，保证可复现。
+
+> **待办**：M2.0 装好 CUDA 版 torch 后，本节需重新生成一次快照并把实际版本号固化进论文附录。
 
 ### 3.3 随机性控制
 
@@ -584,6 +591,11 @@ flowchart LR
 | **合计** | — | — | **72** | **~77 h** |
 
 > 消融组 2、3 与 E1 的 SASRec 基准可复用同一次训练结果，实际训练次数可压缩。
+>
+> ⚠️ **上表的 ~77 h 是早期按 RTX 3090 估的，不可作为排期依据。** 本机为 RTX 2060 6GB，
+> 且当前 torch 无 CUDA 支持；阶段一实测每 epoch 的训练样本量为 **109,081,471**（约 1.09 亿），
+> 必须采用「开发档抽样 / 正式档全量」双档位策略，超参搜索只在开发档进行。
+> 重估流程与决策项见 [progress.md](progress.md) §5–§6。
 
 ---
 

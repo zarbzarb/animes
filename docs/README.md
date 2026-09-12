@@ -6,7 +6,8 @@
 
 ### 路径 A：想快速了解项目（5 分钟）
 1. [../README.md](../README.md) —— 项目门面
-2. [architecture.md](architecture.md) —— 第 1、2 节，五层架构 + 数据流
+2. [progress.md](progress.md) —— **现在做到哪了、环境撑不撑得住、下一步做什么**
+3. [architecture.md](architecture.md) —— 第 1、2 节，五层架构 + 数据流
 
 ### 路径 B：想搞懂算法（30 分钟）
 1. [evaluation-plan.md](evaluation-plan.md) —— 实验口径与数据集处理
@@ -44,6 +45,7 @@
 | 11 | [result-analysis.md](result-analysis.md) | 实验评估 | ★ | 全部指标汇总、对比图表、错误案例分析 |
 | 12 | [config-guide.md](config-guide.md) | 部署配置 | ☆ | 配置项清单、三套环境差异、密钥管理 |
 | 13 | [dev-conventions.md](dev-conventions.md) | 开发规范 | ★ | Git 工作流、分支与提交规范、代码规范、文档规范 |
+| 14 | [progress.md](progress.md) | 项目管理 | ★ | **进度快照**：阶段完成度、环境实况、里程碑拆解、待决策与风险 |
 
 ★ = 必读（答辩/开发强依赖）　☆ = 按需查阅
 
