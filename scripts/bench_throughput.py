@@ -729,6 +729,9 @@ def parse_args() -> argparse.Namespace:
                    help="--mode model 时的模块:函数，形如 pkg.mod:fn(cfg)->nn.Module")
     p.add_argument("--batch-sizes", type=int, nargs="+", default=[128, 256, 512, 1024],
                    help="batch 扫描列表，用来找 6GB 显存上限")
+    p.add_argument("--train-negatives", type=int, default=None,
+                   help="训练侧负样本数；不指定则等于评估口径（100）。"
+                        "评估候选集恒为 1 正 + 100 负，不受本参数影响")
     p.add_argument("--steps", type=int, default=30, help="每个配置的计时步数（不含 warmup）")
     p.add_argument("--warmup", type=int, default=5, help="预热步数")
     p.add_argument("--no-amp", action="store_true", help="跳过 AMP 对比，只测 fp32")
@@ -804,7 +807,16 @@ def main() -> int:
 
     # 负样本数只在 experiment.yaml 的 base 段里（model.yaml 没有），显式取一次并落进产物，
     # 避免"悄悄用错候选集大小"。它直接决定 step 耗时，错了吞吐就是假的。
+    #
+    # ⚠️ 训练与评估的候选集大小是【两件事】，必须分开：
+    #   · 评估侧恒为 1 正 + neg_sample_num 负（口径固定，改则指标不可比）；
+    #   · 训练侧由 --train-negatives 决定，SASRec 原论文为「每位置 1 负样本」。
+    #   先前版本把评估口径直接套到训练侧，会让训练耗时被高估数倍。
     neg_sample_num = int(exp_cfg.get("base", {}).get("neg_sample_num", 100))
+    eval_neg = neg_sample_num
+    train_neg = eval_neg if args.train_negatives is None else int(args.train_negatives)
+    if train_neg < 1:
+        raise SystemExit(f"--train-negatives 必须 >= 1，收到 {train_neg}")
     max_seq_len = int(model_cfg["model"]["max_seq_len"])
 
     device = resolve_device(args.device)
@@ -814,7 +826,8 @@ def main() -> int:
     log(f"设备：{env.get('gpu_name', env['device'])} | torch {env['torch']} | "
         f"cuda_runtime {env['torch_cuda_runtime']} | amp={env.get('amp_supported')}")
     log(f"物品池 {human_int(vocab['n_items'])} | 内容向量 {vocab['content_dim']} 维 | "
-        f"负采样 {neg_sample_num}")
+        f"训练候选 {1 + train_neg}（1 正 + {train_neg} 负）| "
+        f"评估候选 {1 + eval_neg}（1 正 + {eval_neg} 负）")
 
     log("正在从 user_stats.parquet 精确重算各档位样本量 ...")
     profiles = load_scale_profiles(scale_cfg, max_seq_len)
@@ -844,6 +857,8 @@ def main() -> int:
         "environment": env,
         "vocab": vocab,
         "neg_sample_num": neg_sample_num,
+        "train_negatives": train_neg,
+        "eval_negatives": eval_neg,
         "max_seq_len": max_seq_len,
         "sample_formula": SAMPLE_FORMULA,
         "scale_profiles": profiles,
@@ -855,12 +870,15 @@ def main() -> int:
     }
 
     if not args.no_bench:
-        model, n_cand = build_model(args, model_cfg, vocab, device, neg_sample_num)
+        model, train_n_cand = build_model(args, model_cfg, vocab, device, train_neg)
+        eval_n_cand = 1 + eval_neg
         n_params = sum(p.numel() for p in model.parameters())
         log(f"待测模型：{type(model).__name__} | 参数量 {human_int(n_params)} | "
-            f"候选数 C={n_cand}（1 正 + {n_cand - 1} 负）")
+            f"训练候选 C={train_n_cand}（1 正 + {train_n_cand - 1} 负）| "
+            f"评估候选 C={eval_n_cand}")
         result["model_info"].update(
-            {"class": type(model).__name__, "n_params": n_params, "n_cand": n_cand}
+            {"class": type(model).__name__, "n_params": n_params,
+             "train_n_cand": train_n_cand, "eval_n_cand": eval_n_cand}
         )
 
         if device.type == "cuda":
@@ -868,13 +886,18 @@ def main() -> int:
 
         amp_modes = [False] if args.no_amp else [False, True]
         for bs in args.batch_sizes:
-            rng = torch.Generator(device=device).manual_seed(
-                int(model_cfg["train"].get("seed", 42))
-            )
+            seed = int(model_cfg["train"].get("seed", 42))
+            # 训练与评估各生成一套 batch：候选维度分别是 train_n_cand / eval_n_cand。
+            # 必须分开测，否则改动训练口径会连带污染评估吞吐的测量值。
             batches = make_batches(
-                4, bs, max_seq_len, n_cand, vocab["n_items"], vocab["content_dim"], device, rng
+                4, bs, max_seq_len, train_n_cand, vocab["n_items"], vocab["content_dim"],
+                device, torch.Generator(device=device).manual_seed(seed),
             )
-            labels = torch.zeros(bs, n_cand, device=device)
+            batches_eval = make_batches(
+                4, bs, max_seq_len, eval_n_cand, vocab["n_items"], vocab["content_dim"],
+                device, torch.Generator(device=device).manual_seed(seed),
+            )
+            labels = torch.zeros(bs, train_n_cand, device=device)
             labels[:, 0] = 1.0   # 第 0 列固定放正样本（与评估口径一致，见 evaluation-plan 5.2）
 
             for amp in amp_modes:
@@ -888,13 +911,15 @@ def main() -> int:
                     result["benches"][tag] = {"oom": True, "batch_size": bs, "amp": amp}
                     torch.cuda.empty_cache()
                     continue
-                inf = bench_infer_steps(model, batches, args.steps, args.warmup, amp, device)
+                inf = bench_infer_steps(
+                    model, batches_eval, args.steps, args.warmup, amp, device
+                )
                 result["benches"][tag] = {"train": tr, "infer": inf}
                 mem = tr.get("peak_mem_alloc_gb", float("nan"))
                 log(f"  {tag:<14} train {tr['samples_per_second']:>10,.0f} samples/s "
                     f"({tr['seconds_per_step'] * 1000:>7.1f} ms/step) | "
                     f"infer {inf['samples_per_second']:>10,.0f} | peak {mem:.2f} GB")
-            del batches, labels
+            del batches, batches_eval, labels
             if device.type == "cuda":
                 torch.cuda.empty_cache()
 
@@ -930,7 +955,7 @@ def main() -> int:
                 int(model_cfg["model"]["num_layers"]),
                 int(model_cfg["model"]["num_interests"]),
                 int(model_cfg["model"]["routing_iters"]),
-                n_cand,
+                train_n_cand,
                 vocab["content_dim"],
             )
             result["model_info"]["flops_per_sample"] = flops_per_sample
