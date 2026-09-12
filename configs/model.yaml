@@ -33,8 +33,14 @@ model:
                                 # 2026-09-12 修正键名。
 
 content_fusion:
-  candidate_side: true           # 候选侧：拼接内容向量后降维回 hidden_size
-  ranking_side: true             # 排序侧：7:3 加权
+  candidate_side: true           # 候选侧：拼接内容向量后降维回 hidden_size（M2.6b 实现）
+  ranking_side: true             # 排序侧：7:3 加权（M2.6 已实现于 models/content_encoder/fusion.py）
+                                 # ⚠️ M2.6 实测（debug 档，logs/content_fusion_eval.json）：
+                                 #    后验打分融合无增益 —— val ndcg@10 纯行为 0.7878 /
+                                 #    7:3 0.7874 / 5:5 0.7845 / 纯内容 0.1739；
+                                 #    冷启动 holdout 7:3 0.6414 vs 5:5 0.6350。
+                                 #    E2_3 按此口径如实报告；正式结论以 M2.6b
+                                 #    （候选侧端到端拼接）为准。
   w_behavior: 0.7
   w_content: 0.3
   w_content_cold: 0.5
