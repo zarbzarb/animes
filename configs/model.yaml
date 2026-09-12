@@ -14,6 +14,9 @@ scale: dev
 experiment_name: multi_interest_content_v1
 
 model:
+  arch: sasrec                  # 默认基座；M2.5 多兴趣用 --model multi_interest 覆盖，
+                                # 或改此字段。E2 消融的两个组就由这个开关切换。
+                                # 两者共用本段其余全部基座超参（结构上保证可比）
   name: MultiInterestSASRec
   use_multi_interest: true       # M1 多兴趣胶囊
   use_content_fusion: true       # M2 内容融合
@@ -22,9 +25,12 @@ model:
   num_layers: 2
   num_heads: 2
   dropout: 0.2
-  num_interests: 4               # K=4
-  routing_iters: 3
-  shared_item_emb: true          # 胶囊与基座共享物品嵌入
+  num_interests: 4               # K=4（M2.5 胶囊数；HPO 网格 {2,4,6,8}）
+  routing_iters: 3               # MIND 动态路由迭代次数
+  share_item_emb: true           # 胶囊与基座共享物品嵌入
+                                # ⚠️ 此前误写为 shared_item_emb，会被 from_dict
+                                # 静默忽略（默认值恰好也是 true，未造成事故）；
+                                # 2026-09-12 修正键名。
 
 content_fusion:
   candidate_side: true           # 候选侧：拼接内容向量后降维回 hidden_size

@@ -70,11 +70,12 @@ from models.checkpoint.io import checkpoint_name, save_checkpoint  # noqa: E402
 from models.data.negatives import DEFAULT_NEG_SEED  # noqa: E402
 from models.data.user_subset import subset_order  # noqa: E402
 from models.eval.evaluator import build_eval_data, drop_leaked_samples, evaluate  # noqa: E402
+from models.multi_interest.config import MultiInterestConfig  # noqa: E402
+from models.multi_interest.model import MultiInterestSASRec  # noqa: E402
 from models.sasrec.config import OptimConfig, SASRecConfig, TrainConfig  # noqa: E402
 from models.sasrec.dataset import SlidingWindowDataset, WindowBatchIterator  # noqa: E402
 from models.sasrec.model import SASRec  # noqa: E402
 from models.sasrec.train import fit, set_seed  # noqa: E402
-
 # 用户抽样的种子：固定为 42，**不随训练种子变化**。
 # 理由：若它跟着训练种子变，换种子时评估子集也跟着换，"3 个种子的均值"
 # 就不是"同一个测试集上的 3 次重跑"，而混进了数据差异。
@@ -178,6 +179,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="档位定义文件（相对项目根）")
     ap.add_argument("--scale", default=None,
                     help="训练档位：smoke/debug/dev/main/full；默认取配置里的 scale")
+    ap.add_argument("--model", default=None, choices=["sasrec", "multi_interest"],
+                    help="模型结构：sasrec（M2.4 基座）/ multi_interest（M2.5 多兴趣）。"
+                         "默认取配置里的 arch 字段，再默认 sasrec")
     ap.add_argument("--seed", type=int, default=None,
                     help="只跑这一个种子；默认跑档位定义的全部种子")
     ap.add_argument("--epochs", type=int, default=None, help="覆盖档位的 max_epochs")
@@ -289,10 +293,25 @@ def main(argv=None) -> int:
         device = torch.device("cpu")
 
     # ---------- 模型结构（不随档位变化）----------
-    model_cfg = SASRecConfig.from_dict(m_cfg, n_items=n_items)
-    logger.info("模型：hidden=%d layers=%d heads=%d dropout=%g，输入上限 %d",
-                model_cfg.hidden_size, model_cfg.num_layers,
-                model_cfg.num_heads, model_cfg.dropout, model_cfg.input_cap)
+    # arch 决定"在基座之上加什么"。多兴趣与基座共用同一份 model: 段的
+    # 基座超参（hidden/layers/heads/dropout…），E2 消融的"其余超参一致"
+    # 是结构上保证的，不是靠人肉对齐两份配置。
+    arch = str(args.model or model_yaml.get("arch") or "sasrec")
+    mi_cfg = None
+    if arch == "multi_interest":
+        mi_cfg = MultiInterestConfig.from_dict(m_cfg, n_items=n_items)
+        model_cfg = mi_cfg.sasrec
+        logger.info(
+            "模型：multi_interest K=%d routing_iters=%d | 基座 hidden=%d "
+            "layers=%d heads=%d dropout=%g，输入上限 %d",
+            mi_cfg.num_interests, mi_cfg.routing_iters,
+            model_cfg.hidden_size, model_cfg.num_layers,
+            model_cfg.num_heads, model_cfg.dropout, model_cfg.input_cap)
+    else:
+        model_cfg = SASRecConfig.from_dict(m_cfg, n_items=n_items)
+        logger.info("模型：hidden=%d layers=%d heads=%d dropout=%g，输入上限 %d",
+                    model_cfg.hidden_size, model_cfg.num_layers,
+                    model_cfg.num_heads, model_cfg.dropout, model_cfg.input_cap)
 
     # ---------- 验证集（只构建一次，跨 epoch 复用 —— 硬约束）----------
     t0 = time.time()
@@ -336,6 +355,7 @@ def main(argv=None) -> int:
             exp_name=exp_name, train_ds=train_ds,
             eval_data=eval_data, ks=ks, device=device, n_items=n_items,
             n_leaked=n_leaked, ckpt_dir=ckpt_dir, log_dir=log_dir,
+            arch=arch, mi_cfg=mi_cfg,
         )
         reports.append(report)
 
@@ -350,6 +370,7 @@ def run_one_seed(
     train_yaml: dict, eval_yaml: dict, exp_name: str, train_ds,
     eval_data, ks, device, n_items: int, n_leaked: int,
     ckpt_dir: str, log_dir: str,
+    arch: str = "sasrec", mi_cfg: MultiInterestConfig = None,
 ) -> dict:
     """跑一个种子：建模型 → 训练 → 存最优权重 → 记录报告。"""
     set_seed(seed)
@@ -425,9 +446,13 @@ def run_one_seed(
         return res
 
     # ---------- 模型 ----------
-    model = SASRec(model_cfg).to(device)
-    logger.info("参数量 %s；训练配置 batch=%d lr=%g amp=%s workers=%d epochs=%d",
-                f"{model.n_params:,}", train_cfg.batch_size, oc.lr,
+    if arch == "multi_interest":
+        model = MultiInterestSASRec(mi_cfg).to(device)
+    else:
+        model = SASRec(model_cfg).to(device)
+    logger.info("参数量 %s（arch=%s）；训练配置 batch=%d lr=%g amp=%s "
+                "workers=%d epochs=%d",
+                f"{model.n_params:,}", arch, train_cfg.batch_size, oc.lr,
                 train_cfg.amp_enabled(), nw, train_cfg.epochs)
 
     # ---------- 训练 ----------
@@ -462,6 +487,7 @@ def run_one_seed(
     # ---------- 落盘 ----------
     report = {
         "experiment_name": exp_name,
+        "arch": arch,
         "scale": scale_name,
         "seed": int(seed),
         "device": str(device),
@@ -494,6 +520,7 @@ def run_one_seed(
             ckpt_dir, checkpoint_name(exp_tag, scale_name, seed, suffix="best"))
         save_checkpoint(path, model, meta={
             "experiment_name": exp_tag,
+            "arch": arch,
             "scale": scale_name,
             "seed": int(seed),
             "epoch": result.best_epoch,
