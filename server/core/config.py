@@ -115,6 +115,9 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440
+    # 登录验证码：默认宽松（带 captcha_id 才校验），生产置 true 后不带验证码直接 422。
+    # 宽松是为了让冒烟/pytest 不必解析图形验证码（那是网页端的事）
+    AUTH_CAPTCHA_STRICT: bool = False
     # Agent 内部调用令牌（/internal/agents/*），默认与 JWT_SECRET 不同源
     INTERNAL_TOKEN: str = "internal-dev-token"
 

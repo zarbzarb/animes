@@ -245,6 +245,73 @@ class TestAuth:
             assert "password_hash" not in resp.text, "HTTP 响应泄漏了哈希串"
 
 
+class TestCaptcha:
+    """登录验证码：一次一密、存服务端缓存、大小写不敏感（server/core/captcha.py）。"""
+
+    @staticmethod
+    def _new(client):
+        """取一条新验证码。测试进程内直接读缓存拿答案（前端只能看图）。"""
+        import asyncio
+
+        body = client.get("/api/v1/auth/captcha").json()
+        assert body["code"] == 0
+        d = body["data"]
+        assert d["captcha_id"] and d["svg"].startswith("<svg")
+        from server.core.cache import get_cache
+        code = asyncio.run(get_cache().get_json(f"captcha:{d['captcha_id']}"))
+        assert code, "验证码答案必须落缓存（TTL 5 分钟）"
+        return d["captcha_id"], code
+
+    def test_wrong_code_rejected(self, client, seeded, password):
+        cid, _ = self._new(client)
+        r = client.post("/api/v1/auth/login",
+                        json={"username": "demo", "password": password,
+                              "captcha_id": cid, "captcha_code": "xxxx"})
+        assert r.status_code == 400 and r.json()["code"] == 40001
+        assert "验证码" in r.json()["message"]
+
+    def test_correct_code_allows_login_and_is_one_time(self, client, seeded, password):
+        cid, code = self._new(client)
+        r = client.post("/api/v1/auth/login",
+                        json={"username": "demo", "password": password,
+                              "captcha_id": cid, "captcha_code": code})
+        assert r.json()["code"] == 0
+        # 同一条验证码第二次使用必须作废（防重放试错）
+        replay = client.post("/api/v1/auth/login",
+                             json={"username": "demo", "password": password,
+                                   "captcha_id": cid, "captcha_code": code})
+        assert replay.status_code == 400 and replay.json()["code"] == 40001
+
+    def test_case_insensitive(self, client, seeded, password):
+        cid, code = self._new(client)
+        r = client.post("/api/v1/auth/login",
+                        json={"username": "demo", "password": password,
+                              "captcha_id": cid, "captcha_code": code.swapcase()})
+        assert r.json()["code"] == 0
+
+    def test_optional_by_default_in_tests(self, client, seeded, password):
+        """宽松模式（默认）：不带验证码也能登录 —— 冒烟/CI 依赖它。"""
+        from server.core.config import settings
+        assert settings.AUTH_CAPTCHA_STRICT is False
+        r = client.post("/api/v1/auth/login",
+                        json={"username": "demo", "password": password})
+        assert r.json()["code"] == 0
+
+    def test_strict_mode_requires_captcha(self, client, seeded, password, monkeypatch):
+        """生产开关：AUTH_CAPTCHA_STRICT=true 时不带验证码直接拒绝。"""
+        from server.core.config import settings
+        monkeypatch.setattr(settings, "AUTH_CAPTCHA_STRICT", True)
+        r = client.post("/api/v1/auth/login",
+                        json={"username": "demo", "password": password})
+        assert r.status_code == 400 and r.json()["code"] == 40001
+        assert "验证码" in r.json()["message"]
+        cid, code = self._new(client)
+        ok = client.post("/api/v1/auth/login",
+                         json={"username": "demo", "password": password,
+                               "captcha_id": cid, "captcha_code": code})
+        assert ok.json()["code"] == 0
+
+
 class TestUsers:
     def test_me_roundtrip(self, client, auth):
         me = client.get("/api/v1/users/me", headers=auth).json()["data"]

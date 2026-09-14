@@ -55,6 +55,7 @@ PUBLIC_ENDPOINTS = frozenset({
     ("GET", "/api/v1/genres"),
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/register"),
+    ("GET", "/api/v1/auth/captcha"),             # 登录验证码（未登录就要能取）
     ("GET", "/api/v1/health"),
     ("POST", "/api/v1/internal/agents/{name}"),  # 有独立内网 token 守卫（40301）
     ("GET", "/api/v1/internal/health"),

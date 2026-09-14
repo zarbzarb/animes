@@ -75,7 +75,8 @@ Authorization: Bearer <access_token>
 | # | 模块 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|---|---|
 | 1 | 认证 | POST | `/auth/register` | ❌ | 注册 |
-| 2 | 认证 | POST | `/auth/login` | ❌ | 登录 |
+| 2 | 认证 | POST | `/auth/login` | ❌ | 登录（带验证码） |
+| 2b | 认证 | GET | `/auth/captcha` | ❌ | 登录验证码（SVG，一次一密） |
 | 3 | 认证 | POST | `/auth/refresh` | ✅ | 刷新 token |
 | 4 | 认证 | POST | `/auth/logout` | ✅ | 登出 |
 | 5 | 用户 | GET | `/users/me` | ✅ | 当前用户信息 |
@@ -162,12 +163,38 @@ Authorization: Bearer <access_token>
 
 ---
 
+#### `GET /auth/captcha`
+
+**响应**
+
+```jsonc
+{
+  "code": 0, "message": "ok",
+  "data": {
+    "captcha_id": "c2218a199769...",   // 登录时原样带回
+    "svg": "<svg .../>",               // 服务端渲染的扭曲字符图（4 位，浏览器直接内联）
+    "expires_in": 300                  // 秒
+  }
+}
+```
+
+> 一次一密：答案只存服务端缓存（TTL 5 分钟），**无论校验对错都立即作废**；
+> 大小写不敏感；字符集已去掉 `0O1lI` 等易混字形。生产环境置
+> `AUTH_CAPTCHA_STRICT=true` 后，登录不带验证码直接 `40001`。
+
+---
+
 #### `POST /auth/login`
 
 **请求**
 
 ```jsonc
-{ "username": "anifan", "password": "P@ssw0rd" }
+{ "username": "anifan", "password": "P@ssw0rd",
+  "captcha_id": "c2218a199769...", "captcha_code": "a7k2" }
+```
+
+`captcha_id` / `captcha_code` 由 `GET /auth/captcha` 获得；默认宽松
+（不带也放行，供冒烟/脚本），strict 模式下必填。
 ```
 
 **响应**：同注册（不含 `user` 时也返回概要）。

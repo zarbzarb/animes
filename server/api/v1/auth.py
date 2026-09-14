@@ -11,7 +11,7 @@ import logging
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
 
-from server.core.exceptions import BizError, ErrCode, unauthorized
+from server.core.exceptions import BizError, ErrCode, invalid_param, unauthorized
 from server.core.response import make_router, Enveloped, degraded
 from server.core.security import create_access_token, hash_password, verify_password
 from server.deps import current_user, get_gw, rate_limit
@@ -56,6 +56,11 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     username: str
     password: str
+    # 验证码：前端登录页永远携带；服务端默认宽松（带则校验、不带放行），
+    # `settings.AUTH_CAPTCHA_STRICT=true`（生产）时不带直接 422。
+    # 详见 server/core/captcha.py 模块 docstring。
+    captcha_id: str = Field("", max_length=64)
+    captcha_code: str = Field("", max_length=8)
 
 
 def _token_bundle(user: dict) -> dict:
@@ -91,8 +96,23 @@ async def register(body: RegisterIn) :
     return Enveloped(data=_token_bundle(user), code=0, message="注册成功")
 
 
+@router.get("/captcha", summary="登录验证码（SVG）")
+async def captcha() :
+    """一次一密的图形验证码：答案只存服务端缓存（TTL 5 分钟），SVG 无需前端渲染库。"""
+    from server.core.captcha import new_captcha
+    return Enveloped(data=await new_captcha(), code=0, message="ok")
+
+
 @router.post("/login", summary="登录", dependencies=[Depends(rate_limit("login"))])
 async def login(body: LoginIn) :
+    # 验证码校验（一次性）：带 id 就必须对；strict 模式下不带直接拒绝
+    from server.core.captcha import verify_captcha
+    if body.captcha_id or body.captcha_code:
+        if not await verify_captcha(body.captcha_id, body.captcha_code):
+            raise invalid_param("验证码错误或已过期，请刷新后重试", detail={"field": "captcha_code"})
+    elif settings.AUTH_CAPTCHA_STRICT:
+        raise invalid_param("请输入图形验证码", detail={"field": "captcha_code"})
+
     gw = get_gw()
     user = gw.get_user_by_username(body.username)
     # 用户名不存在与密码错误返回**同一个**错误码：否则接口变成账号枚举器

@@ -21,7 +21,8 @@ http.interceptors.response.use(
       if (body.code === 40101) {
         auth.logout()
         router.push('/login')
-        return Promise.reject(new Error('未登录'))
+        ElMessage.error(body.message || '登录状态已失效，请重新登录')
+        return Promise.reject(new Error(body.message || '未登录'))
       }
       if (body.code !== 0 && body.code !== 60401) {
         ElMessage.error(body.message || `请求失败（code=${body.code}）`)
@@ -32,12 +33,19 @@ http.interceptors.response.use(
     return body
   },
   (err) => {
-    // 404/422/500 等也被统一异常处理器包成信封
+    // 404/422/500 等也被统一异常处理器包成信封（带真实 HTTP 状态码）
     const body = err.response?.data
     const msg = body?.message || err.message || '网络错误'
     if (body?.code === 40101) {
-      auth.logout()
-      router.push('/login')
+      if (router.currentRoute.value.path === '/login') {
+        // 登录页上的失败（密码错/验证码错）：提示即可，跳转会形成循环
+        ElMessage.error(msg)
+      } else {
+        // 使用途中会话失效：踢回登录页
+        ElMessage.error(body?.message || '登录状态已失效，请重新登录')
+        auth.logout()
+        router.push('/login')
+      }
     } else {
       ElMessage.error(msg)
     }
