@@ -325,12 +325,23 @@ flowchart LR
 
 | Key 模式 | 内容 | TTL | 写入方 | 读取方 |
 |---|---|---|---|---|
-| `rec:{uid}` | Top20 推荐结果 + 解释 | 24h | A4（离线）/ 增量重排 | 应用层（主链路） |
+| `rec:{uid}:{scene}[:{gid}]` | Top20 推荐结果 + 解释 | 24h | A4（离线）/ 增量重排 | 应用层（主链路） |
 | `rec:new:{uid}` | 新番专区推荐 | 7d | A3 | 应用层 |
 | `profile:{uid}` | 用户画像快照 | 1h | A1 | A2 / A3 / A4 / A5 |
 | `mem:short:{uid}:{sid}` | 会话短期记忆 | 30min | A1 / A7 | A1 / A7 |
 | `stream:user_behavior` | 行为事件流 | — | 应用层 | Worker |
 | `agent:lock:{agent}:{key}` | 并发去重锁 | 10s | A0 | A0 |
+
+> **推荐结果键为什么带 `scene` / `gid`**：同一个用户在
+> 综合(0) / 分题材(1) / 新番(2) / 对话(3) 四个场景下的结果是**不同**的，
+> 分题材还要再按 12 个题材各存一份。少了这两维会互相串缓存。
+>
+> ⚠️ 代价是**失效不能再按精确键删**（调用方只拿到 `user_id`，枚举不出所有组合）：
+> 必须走 `server/core/cache.py::rec_scope_prefix(uid)` = `rec:{uid}:`
+> 加 `Cache.delete_prefix(prefix)` 整片清。本表早期写作 `rec:{uid}`，
+> 而实现写的是 `rec:{uid}:{scene}` —— 于是失效逻辑**一个键都删不中且不报错**，
+> 表现为"用户新增追番后推荐 24 小时内毫无变化"。
+> 两侧的一致性由 `tests/test_agents/test_cache_keys.py` 锁定。
 
 ### 5.4 LLM 与 Agent 的关联
 

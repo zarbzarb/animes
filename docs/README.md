@@ -46,6 +46,7 @@
 | 12 | [config-guide.md](config-guide.md) | 部署配置 | ☆ | 配置项清单、三套环境差异、密钥管理 |
 | 13 | [dev-conventions.md](dev-conventions.md) | 开发规范 | ★ | Git 工作流、分支与提交规范、代码规范、文档规范 |
 | 14 | [progress.md](progress.md) | 项目管理 | ★ | **进度快照**：阶段完成度、环境实况、里程碑拆解、待决策与风险 |
+| 15 | [gpu-queue.md](gpu-queue.md) | 项目管理 | ★ | **GPU 实验待办队列**：阶段 2 剩余实验的命令、耗时、结果回写位置（阶段 2/3 并行推进的中转站） |
 
 ★ = 必读（答辩/开发强依赖）　☆ = 按需查阅
 

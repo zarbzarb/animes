@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AniRec · 多智能体动漫追番推荐系统</title>
+<!--
+  演示页（单文件、零依赖、零构建）。
+
+  为什么不做成 React/Vite 工程
+  --------------------------
+  这一页的职责只有一件事：**把后端"真的通了"这件事变得肉眼可见** ——
+  建模阶段已经花了大量 GPU 时间，任何"先 npm install 再跑起来"的门槛
+  都会让人放弃验证。所以它必须能用 `python -m uvicorn server.main:app`
+  起完服务后直接打开 http://127.0.0.1:8000/ 就看到东西。
+
+  它刻意展示的三类信息
+  ------------------
+  1. **统一响应体**：`{code,message,data,meta,trace_id,elapsed_ms}`。
+     顶栏那个 trace_id 就是当前请求的，出问题能直接拿去查调用链。
+  2. **双路融合**：每张卡片都画了 `behavior_score`(行为) 与 `content_score`(内容)
+     两条小条 —— 这是本项目的核心贡献，不画出来就只剩一个黑盒排名。
+  3. **降级链**：`meta.degraded` / `agent_chain` / 冷启动徽章。
+     降级是设计的一部分（Redis、LLM 都允许缺席），但**必须可见**，
+     否则"看起来正常、其实是兜底"正是最难查的一类问题。
+-->
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --line: #e3e6ea; --line-soft: #eef1f4;
+    --fg: #1c2430; --fg-dim: #6b7684; --fg-faint: #9aa4b1;
+    --brand: #d94f4f; --brand-soft: #fdeeee;
+    --blue: #3a6ea8; --green: #2f9e63; --amber: #b8791f;
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  }
+  a { color: var(--blue); }
+
+  /* ---------- 顶栏 ---------- */
+  header {
+    position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.92);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+    padding: 12px 22px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .logo { font-weight: 700; font-size: 17px; letter-spacing: .3px; }
+  .logo span { color: var(--brand); }
+  .grow { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+    border-radius: 999px; font-size: 12px; border: 1px solid var(--line);
+    background: #fff; color: var(--fg-dim);
+  }
+  .pill b { color: var(--fg); font-weight: 600; }
+  .pill.ok { border-color: #cfe9da; background: #f2fbf6; color: var(--green); }
+  .pill.warn { border-color: #f2e0c0; background: #fdf8ef; color: var(--amber); }
+  .pill.bad { border-color: #f0cccc; background: #fdf2f2; color: var(--brand); }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 20px 22px 60px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px 18px; margin-bottom: 18px;
+  }
+  .card > h2 {
+    margin: 0 0 4px; font-size: 15px; display: flex; align-items: center; gap: 9px;
+  }
+  .card > h2 .idx {
+    display: inline-flex; width: 20px; height: 20px; border-radius: 5px;
+    background: var(--brand-soft); color: var(--brand); font-size: 12px;
+    align-items: center; justify-content: center; font-weight: 700;
+  }
+  .hint { color: var(--fg-faint); font-size: 12px; margin: 0 0 14px; }
+
+  button {
+    font: inherit; padding: 6px 14px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--line); background: #fff; color: var(--fg);
+    transition: .15s;
+  }
+  button:hover:not(:disabled) { border-color: #c9cfd7; background: #fafbfc; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+  button.primary:hover:not(:disabled) { background: #c84343; }
+  input, textarea, select {
+    font: inherit; padding: 6px 10px; border-radius: 7px;
+    border: 1px solid var(--line); background: #fff; color: var(--fg); outline: none;
+  }
+  input:focus, textarea:focus { border-color: var(--brand); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  /* ---------- 推荐卡片 ---------- */
+  .feed { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 14px; }
+  .item {
+    border: 1px solid var(--line-soft); border-radius: 9px; overflow: hidden;
+    display: flex; flex-direction: column; background: #fff;
+  }
+  .item .top { display: flex; gap: 11px; padding: 11px; }
+  .cover {
+    width: 58px; height: 82px; flex: none; border-radius: 6px; object-fit: cover;
+    background: linear-gradient(140deg,#e9edf2,#dde3ea); display: block;
+  }
+  .item .meta { min-width: 0; flex: 1; }
+  .item .title {
+    font-weight: 600; font-size: 13.5px; line-height: 1.35; margin-bottom: 3px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .item .sub { color: var(--fg-faint); font-size: 11.5px; }
+  .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; }
+  .tag {
+    font-size: 10.5px; padding: 1px 6px; border-radius: 4px;
+    background: #eef2f7; color: #4b6079;
+  }
+  .tag.rank { background: var(--brand-soft); color: var(--brand); font-weight: 700; }
+  .tag.cold { background: #fff6e5; color: var(--amber); }
+
+  /* 双路分数条 —— 项目的核心贡献，必须画出来 */
+  .bars { padding: 0 11px 10px; }
+  .bar { display: flex; align-items: center; gap: 7px; margin-top: 5px; font-size: 11px; }
+  .bar .lbl { width: 32px; color: var(--fg-faint); flex: none; }
+  .bar .track { flex: 1; height: 5px; background: #eef1f4; border-radius: 3px; overflow: hidden; }
+  .bar .fill { height: 100%; border-radius: 3px; }
+  .bar .val { width: 44px; text-align: right; font-family: var(--mono); color: var(--fg-dim); flex: none; }
+  .fill.b { background: var(--blue); }
+  .fill.c { background: var(--green); }
+  .fill.f { background: var(--brand); }
+  .bar.final .val { color: var(--fg); font-weight: 600; }
+
+  .why {
+    margin: 0; padding: 9px 11px; background: #fafbfc;
+    border-top: 1px solid var(--line-soft); font-size: 12px; color: #44505f;
+  }
+  .why .k { color: var(--fg-faint); }
+  .why .src {
+    font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: 5px;
+    background: #eef2f7; color: var(--fg-dim); font-family: var(--mono);
+  }
+
+  /* ---------- 雷达 ---------- */
+  .radar-wrap { display: flex; gap: 26px; align-items: center; flex-wrap: wrap; }
+  .legend { flex: 1; min-width: 260px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px 16px; }
+  .legend .lg { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+  .legend .nm { width: 66px; color: var(--fg-dim); flex: none; }
+  .legend .tk { flex: 1; height: 5px; background: #eef1f4; border-radius: 3px; overflow: hidden; }
+  .legend .fl { height: 100%; background: var(--brand); border-radius: 3px; }
+  .legend .vl { width: 34px; text-align: right; font-family: var(--mono); color: var(--fg-faint); font-size: 11px; }
+
+  /* ---------- 对话 ---------- */
+  #chatLog {
+    max-height: 300px; overflow-y: auto; padding: 4px 2px; margin-bottom: 10px;
+    display: flex; flex-direction: column; gap: 9px;
+  }
+  .msg { max-width: 86%; padding: 8px 12px; border-radius: 9px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+  .msg.u { align-self: flex-end; background: var(--brand); color: #fff; border-bottom-right-radius: 3px; }
+  .msg.a { align-self: flex-start; background: #f1f4f8; border-bottom-left-radius: 3px; }
+  .msg.sys { align-self: flex-start; background: none; color: var(--fg-faint); font-size: 11.5px; padding: 2px 4px; font-family: var(--mono); }
+  .msg .mini { display: flex; gap: 7px; margin-top: 8px; flex-wrap: wrap; }
+  .msg .mini .c {
+    background: #fff; border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 7px; font-size: 11px; color: var(--fg);
+  }
+
+  /* ---------- 通用 ---------- */
+  .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 12px; }
+  .kv div { font-size: 12px; color: var(--fg-faint); }
+  .kv b { display: block; font-size: 17px; color: var(--fg); font-weight: 650; }
+  .chain { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; }
+  .step { padding: 3px 9px; border-radius: 6px; background: #eef2f7; color: #44505f; }
+  .step.ok { background: #eef7f2; color: var(--green); }
+  .arrow { color: var(--fg-faint); }
+  pre {
+    background: #f7f9fb; border: 1px solid var(--line-soft); border-radius: 8px;
+    padding: 11px; overflow: auto; font-family: var(--mono); font-size: 11.5px;
+    max-height: 300px; margin: 0; color: #3a4653;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 780px) { .grid2 { grid-template-columns: 1fr; } }
+  details summary { cursor: pointer; color: var(--fg-dim); font-size: 12px; }
+  #toast {
+    position: fixed; right: 18px; bottom: 18px; z-index: 50;
+    background: #26303d; color: #fff; padding: 10px 15px; border-radius: 8px;
+    font-size: 12.5px; opacity: 0; transform: translateY(8px);
+    transition: .2s; pointer-events: none; max-width: 380px;
+  }
+  #toast.show { opacity: 1; transform: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Ani<span>Rec</span></div>
+  <span class="pill" id="pHealth"><b>·</b> 检查中…</span>
+  <span class="grow"></span>
+  <span class="pill" id="pUser">未登录</span>
+  <span class="pill" id="pDeg" style="display:none"></span>
+  <a href="/docs" target="_blank" style="font-size:12.5px">接口文档 /docs</a>
+</header>
+
+<main>
+
+  <!-- ========== 0. 登录 ========== -->
+  <div class="card">
+    <h2><span class="idx">0</span>登录</h2>
+    <p class="hint">
+      演示账号密码统一 <code>P@ssw0rd</code>；推荐与雷达需要登录（要按用户画像算），
+      而 <code>/animes</code> 列表是公开的。管理端另有 <code>admin</code>。
+    </p>
+    <div class="row">
+      <select id="uSel">
+        <option>anifan</option>
+        <option>casual</option>
+        <option>binger</option>
+        <option>critic</option>
+        <option>newbie</option>
+        <option>admin</option>
+      </select>
+      <input id="pwd" type="password" value="P@ssw0rd" style="width:130px">
+      <button class="primary" id="btnLogin">登录</button>
+      <span style="color:var(--fg-faint);font-size:12px" id="loginTip"></span>
+    </div>
+  </div>
+
+  <!-- ========== 1. 综合推荐 ========== -->
+  <div class="card">
+    <h2><span class="idx">1</span>综合推荐
+      <span class="grow"></span>
+      <button id="btnFeed">刷新</button>
+    </h2>
+    <p class="hint">
+      <code>GET /recommend/feed</code> —— A0 编排 A1→A2∥A3→A4→A5。
+      红条是最终排序键 <code>final_score</code>（**单调不增**，因为它是真正决定位次的分数）；
+      蓝条是行为路、绿条是内容路，两路先各自 min-max 再按 7:3 融合（冷启动候选 5:5）。
+    </p>
+    <div class="feed" id="feed"><div class="hint">登录后自动加载…</div></div>
+  </div>
+
+  <!-- ========== 2. 兴趣雷达 ========== -->
+  <div class="card">
+    <h2><span class="idx">2</span>兴趣雷达</h2>
+    <p class="hint"><code>GET /analysis/interest-radar</code> —— A1 的画像产出，12 类题材强度 + 漂移趋势。</p>
+    <div class="radar-wrap">
+      <svg id="radar" width="290" height="290" viewBox="0 0 290 290"></svg>
+      <div class="legend" id="legend"><span class="hint">登录后加载…</span></div>
+    </div>
+    <p class="hint" id="radarSummary" style="margin:12px 0 0"></p>
+  </div>
+
+  <!-- ========== 3. 对话 ========== -->
+  <div class="card">
+    <h2><span class="idx">3</span>智能对话（SSE 流式）</h2>
+    <p class="hint">
+      <code>POST /chat/message</code> 是 <code>text/event-stream</code>，
+      帧序列 <code>tool_call → tool_result → chunk → cards → notice → done</code>。
+      LLM 不参与召回排序，只负责理解意图、调工具、组织话术。
+    </p>
+    <div id="chatLog"></div>
+    <div class="row">
+      <input id="chatIn" placeholder="例：有没有类似进击的巨人但更轻松的番？" style="flex:1;min-width:240px">
+      <button class="primary" id="btnChat">发送</button>
+    </div>
+  </div>
+
+  <!-- ========== 4. 数据概览 ========== -->
+  <div class="grid2">
+    <div class="card">
+      <h2><span class="idx">4</span>追番概览</h2>
+      <p class="hint"><code>GET /records/stats</code></p>
+      <div class="kv" id="stats"><span class="hint">登录后加载…</span></div>
+    </div>
+    <div class="card">
+      <h2><span class="idx">5</span>番剧库</h2>
+      <p class="hint"><code>GET /animes</code>（公开接口，无需登录）</p>
+      <div class="kv" id="catalog"><span class="hint">加载中…</span></div>
+    </div>
+  </div>
+
+  <!-- ========== 6. 系统状态 ========== -->
+  <div class="card">
+    <h2><span class="idx">6</span>调用链与降级</h2>
+    <p class="hint">
+      降级是**设计的一部分**（Redis / LLM 允许缺席），但必须可见 ——
+      否则"页面看着正常、其实走了兜底"正是最难查的一类问题。
+    </p>
+    <div class="row" style="margin-bottom:12px">
+      <button id="btnHealth">刷新 Agent 健康度</button>
+      <span class="hint" id="chainHint" style="margin:0">最近一次 feed 的调用链会显示在这里</span>
+    </div>
+    <div class="chain" id="chain"></div>
+    <details style="margin-top:14px">
+      <summary>原始响应信封（最近一次 feed）</summary>
+      <pre id="rawEnv" style="margin-top:8px">（还没有请求）</pre>
+    </details>
+  </div>
+
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   与后端的约定（改动前先看 server/core/response.py）
+   * 每个响应都是 {code,message,data,meta,trace_id,elapsed_ms}
+   * code=0 才是成功；业务错误也用 HTTP 200 返回，靠 code/message 区分
+   * 降级时 code=60401 且 meta.degraded 非空 —— 仍然 HTTP 200
+   所以这里**只看 code**，不看 HTTP 状态。
+   ===================================================================== */
+const API = "/api/v1";
+let TOKEN = null, USER = null, LAST_ENV = null;
+
+const $ = (id) => document.getElementById(id);
+
+function toast(msg, ms = 3200) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+/** 统一请求入口。返回 `data`；失败时抛错并提示。 */
+async function req(method, path, body) {
+  const opt = { method, headers: { "Content-Type": "application/json" } };
+  if (TOKEN) opt.headers.Authorization = "Bearer " + TOKEN;
+  if (body !== undefined) opt.body = JSON.stringify(body);
+
+  let env;
+  try {
+    const r = await fetch(API + path, opt);
+    env = await r.json();
+  } catch (e) {
+    toast("网络错误：" + e.message);
+    throw e;
+  }
+  LAST_ENV = env;
+  if (env.code !== 0) {
+    toast(`[${env.code}] ${env.message || "请求失败"}（trace ${env.trace_id}）`);
+    throw new Error(env.message);
+  }
+  // 降级提示：不阻断，只是让它可见
+  const deg = (env.meta && env.meta.degraded) || [];
+  $("pDeg").style.display = deg.length ? "" : "none";
+  $("pDeg").className = "pill warn";
+  $("pDeg").innerHTML = "降级：<b>" + esc(deg.join(", ")) + "</b>";
+  return env.data;
+}
+
+/* ---------------------------------------------------------------- 登录 */
+async function login() {
+  const username = $("uSel").value, password = $("pwd").value;
+  try {
+    const d = await req("POST", "/auth/login", { username, password });
+    TOKEN = d.access_token;
+    USER = d.user;
+    $("pUser").className = "pill ok";
+    $("pUser").innerHTML = `<b>${esc(USER.nickname)}</b> @${esc(USER.username)}`
+      + (USER.role === 1 ? " · 管理员" : "");
+    $("loginTip").textContent = "token 有效期 " + Math.round(d.expires_in / 3600) + " 小时";
+    await refreshAll();
+  } catch (e) { /* toast 已提示 */ }
+}
+
+/** 登录后一次性拉齐所有依赖画像的数据。 */
+async function refreshAll() {
+  await Promise.all([loadFeed(), loadRadar(), loadStats()]);
+  if (USER && USER.role === 1) loadHealth();
+}
+
+/* ------------------------------------------------------- 1. 综合推荐 */
+function bar(cls, label, v, fmt) {
+  const has = v !== null && v !== undefined;
+  const pct = has ? Math.max(0, Math.min(1, Number(v))) * 100 : 0;
+  return `<div class="bar ${cls}">
+      <span class="lbl">${esc(label)}</span>
+      <span class="track"><span class="fill ${cls}" style="width:${pct.toFixed(1)}%"></span></span>
+      <span class="val">${has ? Number(fmt(v)).toFixed(3) : "—"}</span>
+    </div>`;
+}
+
+async function loadFeed() {
+  const box = $("feed");
+  if (!TOKEN) { box.innerHTML = '<div class="hint">请先登录</div>'; return; }
+  box.innerHTML = '<div class="hint">计算中（首次会加载模型）…</div>';
+  try {
+    const d = await req("GET", "/recommend/feed?top_n=8");
+    const items = d.items || [];
+    if (!items.length) { box.innerHTML = '<div class="hint">没有候选（检查是否已跑 init_db）</div>'; return; }
+
+    box.innerHTML = items.map((it) => {
+      const a = it.anime || {};
+      const ex = it.explain || {};
+      const cores = (ex.core_items || []).slice(0, 3)
+        .map((c) => esc(c.title)).filter(Boolean).join("、");
+      return `<div class="item">
+        <div class="top">
+          <img class="cover" loading="lazy" alt=""
+               src="${esc(a.image_url || "")}"
+               onerror="this.style.visibility='hidden'">
+          <div class="meta">
+            <div class="title">${esc(a.title || "(无标题)")}</div>
+            <div class="sub">${esc(a.type || "")} ${a.year || ""} · ${esc(a.score ?? "")} 分</div>
+            <div class="tags">
+              <span class="tag rank">#${it.rank}</span>
+              ${(a.genres || []).slice(0, 3).map((g) => `<span class="tag">${esc(g)}</span>`).join("")}
+              ${it.is_cold_start ? '<span class="tag cold">冷启动</span>' : ""}
+            </div>
+          </div>
+        </div>
+        <div class="bars">
+          ${bar("final", "final", it.final_score)}
+          ${bar("b", "行为", it.behavior_score)}
+          ${bar("c", "内容", it.content_score)}
+        </div>
+        ${ex.reason ? `<div class="why"><span class="k">为什么：</span>${esc(ex.reason)}
+           <span class="src">${esc(ex.source || "")}</span>
+           ${cores ? `<div class="k" style="margin-top:4px">依据：${cores}</div>` : ""}
+        </div>` : ""}
+      </div>`;
+    }).join("");
+
+    renderChain(d.meta);
+    $("rawEnv").textContent = JSON.stringify(LAST_ENV, null, 2);
+  } catch (e) { box.innerHTML = '<div class="hint">加载失败：' + esc(e.message) + "</div>"; }
+}
+
+/* ------------------------------------------------------- 2. 兴趣雷达 */
+async function loadRadar() {
+  if (!TOKEN) return;
+  try {
+    const d = await req("GET", "/analysis/interest-radar");
+    const rs = d.radar || [];
+    const cx = 145, cy = 145, R = 100, n = rs.length;
+    let rings = "", axes = "", pts = [], labels = "";
+    for (let k = 1; k <= 4; k++) {
+      const r = R * k / 4;
+      const poly = Array.from({ length: n }, (_, i) => {
+        const ang = -Math.PI / 2 + i * 2 * Math.PI / n;
+        return (cx + r * Math.cos(ang)).toFixed(1) + "," + (cy + r * Math.sin(ang)).toFixed(1);
+      }).join(" ");
+      rings += `<polygon points="${poly}" fill="none" stroke="#e6eaef" stroke-width="1"/>`;
+    }
+    rs.forEach((g, i) => {
+      const ang = -Math.PI / 2 + i * 2 * Math.PI / n;
+      const v = Math.max(0, Math.min(1, Number(g.value) || 0));
+      axes += `<line x1="${cx}" y1="${cy}" x2="${(cx + R * Math.cos(ang)).toFixed(1)}"
+                y2="${(cy + R * Math.sin(ang)).toFixed(1)}" stroke="#e6eaef" stroke-width="1"/>`;
+      pts.push((cx + R * v * Math.cos(ang)).toFixed(1) + "," + (cy + R * v * Math.sin(ang)).toFixed(1));
+      const lx = cx + (R + 15) * Math.cos(ang), ly = cy + (R + 15) * Math.sin(ang);
+      labels += `<text x="${lx.toFixed(1)}" y="${(ly + 3).toFixed(1)}" font-size="10"
+                  fill="${v > 0 ? "#44505f" : "#b6bec9"}" text-anchor="middle">${esc(g.genre)}</text>`;
+    });
+    $("radar").innerHTML = `${rings}${axes}
+      <polygon points="${pts.join(" ")}" fill="rgba(217,79,79,.20)" stroke="#d94f4f" stroke-width="1.6"/>
+      ${labels}`;
+    // 只列有强度的题材 —— 12 条里大半是 0，全列出来反而看不出重点
+    const live = rs.filter((g) => (Number(g.value) || 0) > 0);
+    $("legend").innerHTML = (live.length ? live : rs)
+      .sort((a, b) => b.value - a.value)
+      .map((g) => `<span class="lg">
+          <span class="nm">${esc(g.genre)}</span>
+          <span class="tk"><span class="fl" style="width:${(Math.max(0, Math.min(1, Number(g.value) || 0)) * 100).toFixed(1)}%"></span></span>
+          <span class="vl">${(Number(g.value) || 0).toFixed(3)}</span>
+        </span>`).join("");
+    $("radarSummary").textContent = [
+      d.summary_text, d.user_tag, d.activity_label,
+      d.total_records != null ? `共 ${d.total_records} 条记录` : "",
+    ].filter(Boolean).join(" · ");
+  } catch (e) { /* toast 已提示 */ }
+}
+
+/* ----------------------------------------------------------- 3. 对话 */
+function pushMsg(cls, html) {
+  const el = document.createElement("div");
+  el.className = "msg " + cls;
+  el.innerHTML = html;
+  $("chatLog").appendChild(el);
+  $("chatLog").scrollTop = $("chatLog").scrollHeight;
+  return el;
+}
+
+async function sendChat() {
+  const text = $("chatIn").value.trim();
+  if (!TOKEN) { toast("请先登录"); return; }
+  if (!text) return;
+  $("chatIn").value = "";
+  $("btnChat").disabled = true;
+  pushMsg("u", esc(text));
+  const box = pushMsg("a", '<span style="color:var(--fg-faint)">思考中…</span>');
+
+  try {
+    const r = await fetch(API + "/chat/message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        Authorization: "Bearer " + TOKEN,
+      },
+      // 刻意**不传** session_id —— 服务端会自己生成一个。
+      // 这条路径曾经因为调用方传了显式 null 而 500，是个真实修过的 bug。
+      body: JSON.stringify({ message: text }),
+    });
+    if (!r.body) throw new Error("浏览器不支持流式响应");
+
+    // 手工解析 SSE：fetch 的 body 是字节流，`data:` 行之间以空行分隔
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = "", reply = "", cards = [], tools = [];
+    box.textContent = "";
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const frames = buf.split("\n\n");
+      buf = frames.pop();
+      for (const f of frames) {
+        const line = f.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5).trim()); } catch (_) { continue; }
+
+        if (ev.type === "tool_call") {
+          tools.push(ev.tool);
+          box.insertAdjacentHTML("beforebegin",
+            `<div class="msg sys">→ 调用工具 ${esc(ev.tool)}(${esc(JSON.stringify(ev.args || {}))})</div>`);
+        } else if (ev.type === "tool_result") {
+          box.insertAdjacentHTML("beforebegin",
+            `<div class="msg sys">← ${esc(ev.tool)} 命中 ${esc(ev.count ?? "?")} 条${ev.error ? " · 错误：" + esc(ev.error) : ""}</div>`);
+        } else if (ev.type === "chunk") {
+          reply += ev.content || "";
+          box.textContent = reply;
+        } else if (ev.type === "cards") {
+          cards = ev.cards || [];
+        } else if (ev.type === "notice") {
+          box.insertAdjacentHTML("beforeend",
+            `<div class="msg sys">⚠ ${esc(ev.message)}${ev.reason ? "：" + esc(ev.reason) : ""}</div>`);
+        } else if (ev.type === "done") {
+          box.dataset.trace = ev.trace_id || "";
+        }
+      }
+      $("chatLog").scrollTop = $("chatLog").scrollHeight;
+    }
+
+    if (!reply.trim()) box.textContent = "（没有回复文本）";
+    if (cards.length) {
+      box.insertAdjacentHTML("beforeend",
+        '<div class="mini">' + cards.map((c) =>
+          `<span class="c">${esc(c.title)}${c.year ? " · " + c.year : ""}</span>`).join("") + "</div>");
+    }
+    if (tools.length) {
+      box.insertAdjacentHTML("beforeend",
+        `<div class="msg sys" style="padding:6px 0 0">工具：${esc(tools.join(" → "))}</div>`);
+    }
+  } catch (e) {
+    box.textContent = "对话失败：" + e.message;
+  } finally {
+    $("btnChat").disabled = false;
+  }
+}
+
+/* ------------------------------------------------------- 4/5. 概览 */
+async function loadStats() {
+  if (!TOKEN) return;
+  try {
+    const d = await req("GET", "/records/stats");
+    const by = d.by_status || {};
+    $("stats").innerHTML = [
+      ["总记录", d.total], ["已看", by["已看"] ?? 0], ["在看", by["在看"] ?? 0],
+      ["弃番", by["弃番"] ?? 0], ["已评分", d.n_rated], ["平均评分", d.avg_rating],
+    ].map(([k, v]) => `<div>${esc(k)}<b>${esc(v ?? "—")}</b></div>`).join("");
+  } catch (e) { /* toast 已提示 */ }
+}
+
+async function loadCatalog() {
+  try {
+    const d = await req("GET", "/animes?limit=6&order_by=n_interactions");
+    const pg = d.pagination || {};
+    $("catalog").innerHTML =
+      `<div>入库番剧<b>${esc(pg.total ?? "—")}</b></div>
+       <div>分页<b>${esc(pg.pages ?? "—")} 页</b></div>` ;
+    const list = d.list || [];
+    $("catalog").insertAdjacentHTML("beforeend",
+      '<div style="grid-column:1/-1;margin-top:4px;font-size:12px;color:var(--fg-dim)">'
+      + list.slice(0, 6).map((a) =>
+          `<div style="padding:3px 0;border-top:1px solid var(--line-soft)">
+             ${esc(a.title)} <span style="color:var(--fg-faint)">· ${esc(a.year || "")} ·
+             ${esc((a.genres || []).join("/"))}</span></div>`).join("")
+      + "</div>");
+  } catch (e) { /* toast 已提示 */ }
+}
+
+/* ------------------------------------------------------- 6. 系统状态 */
+function renderChain(meta) {
+  if (!meta) return;
+  const chain = meta.agent_chain || [];
+  $("chain").innerHTML = chain.length
+    ? chain.map((a, i) => `<span class="step ok">${esc(a)}</span>`
+        + (i < chain.length - 1 ? '<span class="arrow">→</span>' : "")).join("")
+      + `<span class="arrow" style="margin-left:10px">|</span>
+         <span class="step">意图 ${esc(meta.intent_label || meta.intent || "")}</span>
+         <span class="step">${esc(meta.elapsed_ms ?? "?")} ms</span>
+         <span class="step">${meta.cache_hit ? "缓存命中" : "实时计算"}</span>`
+    : "";
+  $("chainHint").textContent = "trace_id = " + (LAST_ENV?.trace_id || "—");
+}
+
+async function loadHealth() {
+  try {
+    const d = await req("GET", "/admin/agents/health");
+    // 10 个 Agent 的健康度是一大坨 JSON，塞进 <details> 里按需展开，
+    // 避免它把主视图挤下去
+    let pre = $("agentHealth");
+    if (!pre) {
+      $("chain").insertAdjacentHTML("afterend",
+        '<details style="margin-top:12px"><summary>Agent 健康度（10 个）</summary>' +
+        '<pre id="agentHealth" style="margin-top:8px"></pre></details>');
+      pre = $("agentHealth");
+    }
+    pre.textContent = JSON.stringify(d.agents || d, null, 2).slice(0, 4000);
+  } catch (e) { toast("管理端需要 admin 登录"); }
+}
+
+async function loadMeta() {
+  try {
+    const d = await req("GET", "/health/deep");
+    $("pHealth").className = "pill ok";
+    $("pHealth").innerHTML = "服务正常 <b>" + esc(d.status || "ok") + "</b>";
+  } catch (e) {
+    $("pHealth").className = "pill bad";
+    $("pHealth").textContent = "服务异常";
+  }
+}
+
+/* ------------------------------------------------------------ 绑定 */
+$("btnLogin").onclick = login;
+$("btnFeed").onclick = loadFeed;
+$("btnChat").onclick = sendChat;
+$("btnHealth").onclick = () => (USER && USER.role === 1
+  ? loadHealth() : toast("请用 admin / P@ssw0rd 登录后再点"));
+$("chatIn").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) sendChat(); };
+$("pwd").onkeydown = (e) => { if (e.key === "Enter") login(); };
+
+// 首屏：健康检查 + 公开接口无需登录
+loadMeta();
+loadCatalog();
+</script>
+</body>
+</html>
