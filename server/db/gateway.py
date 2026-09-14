@@ -664,13 +664,23 @@ class SqlGateway:
 
     def user_genre_time_series(self, user_id: int, *, granularity: str = "quarter",
                                start: Optional[str] = None,
-                               end: Optional[str] = None) -> list[dict]:
+                               end: Optional[str] = None,
+                               limit: Optional[int] = None) -> list[dict]:
         """`[{period: "2025Q2", genre_id, count}]`（A6 漂移分析的时间序列）。
 
         ⚠️ 分档不能用 `strftime('%Y-%m')` 再在 Python 里改：SQLite 与 MySQL
         的日期函数不同名。这里**按数据库方言**生成 period：
         SQLite 用 `strftime`，MySQL 用 `DATE_FORMAT`。少写这个分支的话，
         测试（SQLite）能过、生产（MySQL）直接 500。
+
+        `limit`：只保留**最近 N 个周期**（按 period 升序取末尾，跨题材共享
+        同一份周期清单 —— 否则"每个题材各取 N 条"会把窗口拉长 N 倍）。
+        `None` 表示不限。调用方：`GET /records/timeline`（前端时间轴，
+        默认 12 个周期）；A6 漂移分析不传，拿全量。
+
+        ⚠️ 这个参数 2026-09-14 前不存在，而 `records.py::timeline` 一直在传 ——
+        未捕获 TypeError 直接 500。冒烟没覆盖到这条（它只测了 feed/chat/admin），
+        是 `tests/test_api/test_auth_guard.py` 的全端点探针抓出来的。
         """
         fmt = {"month": "%Y-%m", "quarter": "%Y", "year": "%Y"}[
             granularity if granularity in ("month", "quarter", "year") else "month"]
@@ -703,6 +713,10 @@ class SqlGateway:
             rows = [{"period": k[0], "genre_id": k[1], "count": v}
                     for k, v in merged.items()]
             rows.sort(key=lambda r: (r["period"], r["genre_id"]))
+            if limit is not None and rows:
+                periods = sorted({r["period"] for r in rows})
+                keep = set(periods[-int(limit):])
+                rows = [r for r in rows if r["period"] in keep]
             return rows
 
     # ================================================================ 画像

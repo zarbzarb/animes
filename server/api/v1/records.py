@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from server.core.exceptions import not_found
 from server.core.response import make_router, Enveloped, paginate
-from server.deps import current_user, get_gw
+from server.deps import current_user, get_gw, is_visible_anime
 
 logger = logging.getLogger(__name__)
 router = make_router(prefix="/records", tags=["追番"])
@@ -145,7 +145,7 @@ async def upsert_record(body: RecordIn, background: BackgroundTasks,
                         user: dict = Depends(current_user)) :
     gw = get_gw()
     uid = int(user["id"])
-    if gw.get_anime(body.anime_id) is None:
+    if not is_visible_anime(gw.get_anime(body.anime_id)):
         raise not_found(f"动漫 {body.anime_id} 不存在或已下架")
 
     data = body.model_dump(exclude_none=True)

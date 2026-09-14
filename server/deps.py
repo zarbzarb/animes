@@ -28,9 +28,9 @@ __all__ = [
     "current_admin",
     "current_user",
     "get_gw",
+    "is_visible_anime",
     "optional_user",
     "rate_limit",
-    "require_anime",
 ]
 
 _gateway: Optional[SqlGateway] = None
@@ -103,12 +103,27 @@ async def current_admin(user: dict = Depends(current_user)) -> dict:
     return user
 
 
-async def require_anime(anime_id: int) -> dict:
-    """按**数据集 animeID** 取番剧，不存在直接 404。"""
-    a = get_gw().get_anime(int(anime_id))
-    if a is None or int(a.get("is_forbidden", 0)) == 1:
-        raise not_found(f"动漫 {anime_id} 不存在或已下架")
-    return a
+def is_visible_anime(a: Optional[dict]) -> bool:
+    """用户侧的番剧**可见性**判定：存在、未禁用、且在线。
+
+    ⚠️ 为什么要同时看两个标志（2026-09-14 修的真实不一致）：
+    `set_anime_offline()` 置的是 `is_online=0`，列表/计数/热门/批量四条读路
+    （`list_anime` / `count_anime` / `popular_anime_ids` / `get_animes`）都过滤它，
+    **唯独单查 `get_anime` 不过滤** —— 因为 admin 编辑下架番也要能查到它。
+    结果是：管理员点"下架"，番从列表消失，但详情页/相似接口/加追番的
+    存在性检查照样放行，且不报任何错。
+
+    所以可见性规则收敛在这里这一份。用户侧读门（详情 / 相似 / 加追番 /
+    反馈）统一调用；admin 路径继续直接用 `get_anime`。
+
+    ⚠️ 历史备注：本模块曾有 `require_anime` 依赖封装同一件事，但它**从未被
+    任何路由引用**（各接口都在内联写 `get_anime(...) is None`）—— 死代码
+    制造了"有统一依赖"的假象。已删除；新增需要番剧门的接口请直接用本函数。
+    """
+    if not a:
+        return False
+    return (int(a.get("is_forbidden", 0)) != 1
+            and int(a.get("is_online", 1)) == 1)
 
 
 def rate_limit(spec: str):

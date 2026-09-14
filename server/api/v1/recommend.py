@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from server.core.exceptions import invalid_param, not_found
 from server.core.response import make_router, Enveloped
-from server.deps import current_user, get_gw, rate_limit
+from server.deps import current_user, get_gw, is_visible_anime, rate_limit
 from server.services.agent_bridge import explain_one, feed
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ async def feedback(body: FeedbackIn, user: dict = Depends(current_user)) :
     """
     gw = get_gw()
     uid = int(user["id"])
-    if gw.get_anime(body.anime_id) is None:
+    if not is_visible_anime(gw.get_anime(body.anime_id)):
         raise not_found(f"动漫 {body.anime_id} 不存在")
 
     from server.core.cache import get_cache, rate_key

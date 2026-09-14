@@ -140,10 +140,13 @@ class EnvelopeRoute(APIRoute):
     ⚠️ 两个坑（都真实踩过，别改回去）：
 
     1. **必须在每个子路由上显式设 `route_class`**，不能只写
-       `app.router.route_class = EnvelopeRoute`。`include_router` 只是把
-       **已经构造好的** `APIRoute` 复制进父路由，而子路由的 `APIRoute` 是它
-       自己的 `route_class` 在装饰器执行时创建的 —— 父路由的设置追不回去。
+       `app.router.route_class = EnvelopeRoute`。子路由的 `APIRoute` 是在
+       **装饰器执行的那一刻**由该路由器自己的 `route_class` 创建并固定的，
+       父层（`make_router()` 出的父路由、乃至 `app.router`）事后改设置都追不回去。
        所以统一走 `make_router()`。
+       实测复核（2026-09-14，fastapi 0.141.1）：把朴素 `APIRouter()` 的子路由
+       挂到已设好 `route_class` 的父路由下，响应仍是裸 `{"pong": true}`；
+       换成 `make_router()` 立刻变成完整信封。**规则不变。**
     2. **handler 不能标注 `-> Enveloped`**。那个注解会被 FastAPI 当成
        `response_model`，Pydantic 按 dataclass 字段裁剪，响应体就只剩
        `{data, code, message, meta}`，`trace_id`/`elapsed_ms` 消失。
@@ -197,12 +200,15 @@ def make_router(**kwargs) -> APIRouter:
     """创建**带统一响应体包裹**的 `APIRouter`。
 
     ⚠️ 必须显式给每个子路由传 `route_class`，不能用
-    `app.router.route_class = EnvelopeRoute` 一劳永逸：
-    `include_router` 只是把**已经构造好的** `APIRoute` 复制进父路由，
-    而子路由的 `APIRoute` 是它自己的 `route_class` 在装饰器执行时创建的。
+    `app.router.route_class = EnvelopeRoute` 一劳永逸：子路由的 `APIRoute`
+    是在装饰器执行时由该路由器自己的 `route_class` 创建并固定的。
     实测症状很隐蔽 —— 接口不报错，只是响应里少了 `trace_id` 与 `elapsed_ms`，
     因为 FastAPI 把 handler 返回的 `Enveloped` 当普通 dataclass 序列化成了
     `{code, data, message, meta}`（正好是除了那两个字段之外的四个）。
+
+    回归覆盖：`tests/test_api/test_envelope.py` 会遍历**全部 44 个端点**
+    验证信封完整性。注意那份测试不能用 `app.routes` 递归找子路由 ——
+    fastapi 0.141.1 起 `include_router` 不再摊平，见该文件 `api_routes()`。
     """
     kwargs.setdefault("route_class", EnvelopeRoute)
     return APIRouter(**kwargs)

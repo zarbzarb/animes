@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Query
 
 from server.core.exceptions import not_found
 from server.core.response import make_router, Enveloped, paginate
-from server.deps import get_gw, optional_user
+from server.deps import get_gw, is_visible_anime, optional_user
 
 logger = logging.getLogger(__name__)
 router = make_router(tags=["动漫"])
@@ -55,7 +55,7 @@ async def anime_detail(anime_id: int,
                        user: dict | None = Depends(optional_user)) :
     gw = get_gw()
     a = gw.get_anime(int(anime_id))
-    if a is None or int(a.get("is_forbidden", 0)) == 1:
+    if not is_visible_anime(a):
         raise not_found(f"动漫 {anime_id} 不存在")
     data = {
         "id": a["id"],
@@ -91,7 +91,7 @@ async def similar(anime_id: int, size: int = Query(12, ge=1, le=50)) :
     """
     gw = get_gw()
     anime = gw.get_anime(int(anime_id))
-    if anime is None:
+    if not is_visible_anime(anime):
         raise not_found(f"动漫 {anime_id} 不存在")
 
     src_ids = gw.similar_anime_ids(int(anime_id), top_k=int(size)) or []
