@@ -162,7 +162,9 @@ def _rebuild_content_fused(cfg_dict: dict, fusion: dict) -> nn.Module:
         raise ValueError("checkpoint 的 model_config 里没有 n_items，无法重建模型")
     n_items = int(n_items)
     matrix = load_content_matrix_for_fusion(path_abs, n_items)
-    mode = str(fusion.get("mode") or "concat")
+    # 兜底口径必须与 build_model / configs 的默认一致（M2.6b 起默认 = add）；
+    # 正常情况下 meta 里一定带 mode，这行只是防手工构造 checkpoint 时的静默错配。
+    mode = str(fusion.get("mode") or "add")
 
     if cfg_dict.get("arch") == "multi_interest":
         from models.multi_interest.config import MultiInterestConfig

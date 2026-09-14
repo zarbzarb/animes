@@ -106,12 +106,24 @@ class TestItemContentFusion:
         with pytest.raises(ValueError, match="mode"):
             ItemContentFusion(_content(), hidden_size=H, mode="multiply")
 
-    def test_config_snapshot(self):
-        p = ItemContentFusion(_content(), hidden_size=H)
+    @pytest.mark.parametrize("mode", ["concat", "add"])
+    def test_config_snapshot(self, mode):
+        p = ItemContentFusion(_content(), hidden_size=H, mode=mode)
         snap = p.config_snapshot()
-        assert snap["mode"] == "concat"
+        assert snap["mode"] == mode
         assert snap["content_dim"] == DIM
         assert snap["n_params"] == p.n_params
+
+    def test_default_mode_is_add(self):
+        """默认口径锁定为 add（零初始化残差）。
+
+        回归保护：默认值一旦漂回 concat，所有实验组的口径都会被悄悄改掉
+        （concat 在 SASRec 上整模型 −1.1pp），而权重形状一致、加载不报错、
+        指标也能算出来 —— 属于最难发现的错。见 progress.md §4.1 M2.6b。
+        """
+        assert ItemContentFusion(_content(), hidden_size=H).mode == "add"
+        assert build_model("sasrec", _sasrec_cfg(), N_ITEMS,
+                           _content()).repr_provider.mode == "add"
 
 
 # =====================================================================
@@ -164,8 +176,11 @@ class TestSASRecInjection:
         torch.manual_seed(3)
         cfg = _sasrec_cfg()
         plain = SASRec(cfg)
+        # ⚠️ 显式指定 concat：本用例用 W = [I | 0] 构造恒等，只有 concat 的
+        # 输入维是 (H + D) 才写得出来；add 口径的等价用例是
+        # test_add_mode_starts_exactly_at_baseline（零初始化即恒等）。
         fused = SASRec(cfg, repr_provider=ItemContentFusion(
-            torch.zeros(N_ITEMS + 1, DIM), hidden_size=H))   # 内容全零
+            torch.zeros(N_ITEMS + 1, DIM), hidden_size=H, mode="concat"))
         # 让 provider 退化成恒等：W = [I | 0]，b = 0；
         # ⚠️ 必须整体复制 state_dict —— transformer 块的随机初始化在两个实例
         # 之间是不同的，只复制嵌入会让差异被误判成"注入改变了数值路径"
@@ -195,11 +210,17 @@ class TestBuildModel:
         m = build_model("sasrec", _sasrec_cfg(), N_ITEMS)
         assert m.repr_provider is None
 
-    def test_sasrec_with_content(self):
-        m = build_model("sasrec", _sasrec_cfg(), N_ITEMS, _content())
+    @pytest.mark.parametrize("mode,extra", [
+        ("concat", (H + DIM) * H + H),
+        ("add", DIM * H + H),
+    ])
+    def test_sasrec_with_content(self, mode, extra):
+        m = build_model("sasrec", _sasrec_cfg(), N_ITEMS, _content(),
+                        content_mode=mode)
         assert isinstance(m.repr_provider, ItemContentFusion)
+        assert m.repr_provider.mode == mode
         base = SASRec(_sasrec_cfg()).n_params
-        assert m.n_params == base + (H + DIM) * H + H
+        assert m.n_params == base + extra
 
     def test_multi_interest_with_content(self):
         from models.multi_interest.config import MultiInterestConfig
@@ -213,8 +234,12 @@ class TestBuildModel:
         cand = torch.randint(1, N_ITEMS + 1, (2, 5))
         assert m.score(x, cand).shape == (2, 5)
 
-    def test_provider_reachable_at_top_level_for_all_archs(self):
-        """`model.repr_provider` 必须在**两种 arch 上都可用**。
+    @pytest.mark.parametrize("mode,extra", [
+        ("add", DIM * H + H),           # 默认口径
+        ("concat", (H + DIM) * H + H),
+    ])
+    def test_provider_reachable_at_top_level_for_all_archs(self, mode, extra):
+        """`model.repr_provider` 必须在**两种 arch、两种 mode 上都可用**。
 
         回归保护：多兴趣模型的 provider 实际挂在 `backbone` 上，训练脚本
         按 `model.repr_provider` 取参数量时 AttributeError 崩过一次
@@ -225,11 +250,13 @@ class TestBuildModel:
             dict(hidden_size=H, num_layers=1, num_heads=2, dropout=0.0,
                  max_seq_len=SEQ + 2, num_interests=3, routing_iters=2),
             n_items=N_ITEMS)
-        m2 = build_model("multi_interest", None, N_ITEMS, _content(), mi_cfg=mi)
+        m2 = build_model("multi_interest", None, N_ITEMS, _content(),
+                         content_mode=mode, mi_cfg=mi)
         assert m2.repr_provider is m2.backbone.repr_provider
-        assert m2.repr_provider.n_params == (H + DIM) * H + H
-        m1 = build_model("sasrec", _sasrec_cfg(), N_ITEMS, _content())
-        assert m1.repr_provider.n_params == (H + DIM) * H + H
+        assert m2.repr_provider.n_params == extra
+        m1 = build_model("sasrec", _sasrec_cfg(), N_ITEMS, _content(),
+                         content_mode=mode)
+        assert m1.repr_provider.n_params == extra
 
     def test_row_count_validation(self):
         with pytest.raises(ValueError, match="行数"):
@@ -247,6 +274,35 @@ class TestBuildModel:
         mat = load_content_matrix_for_fusion(str(p), N_ITEMS)
         assert mat.shape == (N_ITEMS + 1, DIM)
         assert float(mat[PAD_ITEM].abs().sum()) == 0.0
+
+
+# =====================================================================
+# 默认口径的配置一致性（四处不同步 = 静默错配）
+# =====================================================================
+class TestDefaultModeConfigConsistency:
+    """`configs/` 与代码默认必须同为 add。
+
+    M2.6b 起默认口径 = add（零初始化残差）。口径分散在四处：类默认、
+    工厂默认、`configs/model.yaml`、`configs/experiment.yaml` 的 E2 组。
+    任何一处漂回 concat，实验就会在「权重形状一致、指标也算得出来」的
+    情况下换掉口径，所以配置也一并锁住。
+    """
+
+    @staticmethod
+    def _load(name):
+        import yaml
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[2]
+        with open(root / "configs" / name, encoding="utf-8") as fh:
+            return yaml.safe_load(fh)
+
+    def test_model_yaml_default_is_add(self):
+        assert self._load("model.yaml")["content_fusion"]["mode"] == "add"
+
+    def test_experiment_yaml_e2_uses_add(self):
+        groups = self._load("experiment.yaml")["E2_ablation"]["groups"]
+        for key in ("E2_3_content_fusion", "E2_4_full"):
+            assert groups[key]["content_mode"] == "add", key
 
 
 # =====================================================================
@@ -300,17 +356,19 @@ class TestCheckpointRoundTrip:
             meta.update(extra_meta)
         return save_checkpoint(str(tmp_path / "ckpt.pt"), model, meta=meta)
 
-    def test_roundtrip_is_bitwise_identical(self, tmp_path):
+    @pytest.mark.parametrize("mode", ["add", "concat"])
+    def test_roundtrip_is_bitwise_identical(self, tmp_path, mode):
         from models.checkpoint.io import load_model_from_checkpoint
 
         torch.manual_seed(5)
-        model = build_model("sasrec", _sasrec_cfg(), N_ITEMS, _content())
+        model = build_model("sasrec", _sasrec_cfg(), N_ITEMS, _content(),
+                            content_mode=mode)
         model.eval()
         path = self._save(tmp_path, model)
         loaded, meta = load_model_from_checkpoint(path)
         loaded.eval()
         assert isinstance(loaded.repr_provider, ItemContentFusion)
-        assert loaded.repr_provider.mode == "concat"
+        assert loaded.repr_provider.mode == mode
         # 内容矩阵必须跟着一起回来（buffer 也在 state_dict 里）
         assert torch.allclose(loaded.repr_provider.content,
                               model.repr_provider.content)

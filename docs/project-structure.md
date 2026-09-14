@@ -155,9 +155,9 @@ models/
 │   ├── train.py
 │   └── README.md
 ├── content_encoder/           # 内容语义编码与融合
-│   ├── encoder.py             #   DistilBERT 编码器封装
-│   ├── fusion.py              #   候选侧拼接 / 排序侧加权
-│   ├── build_vectors.py       #   批量生成 512 维内容向量
+│   ├── fusion.py              #   排序侧（后验）融合：行为分/内容分加权
+│   ├── model.py               #   候选侧（结构级）融合：内容向量作输入特征（M2.6b）
+│   ├── pretrained/            #   本地 DistilBERT 权重（517MB，不入库）
 │   └── README.md
 ├── baselines/                 # 对比基线（保证公平复现）
 │   ├── itemcf.py              #   ItemCF 协同过滤

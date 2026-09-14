@@ -37,10 +37,17 @@ content_fusion:
                                  # ✅ M2.6b 已实现于 models/content_encoder/model.py；
                                  #    训练入口 `python scripts/train.py --content-fusion`
                                  #    （或 --no-content-fusion 关闭）。
-                                 #    新增参数 = (H + D)·H + H = 36,928（H=64, D=512），
+                                 #    新增参数（H=64, D=512）：add 32,832 / concat 36,928；
                                  #    内容矩阵是固定 buffer（不可学）
-  mode: concat                   # concat（拼接后降维，默认，对齐项目文档口径）
-                                 # / add（内容单独投影后相加，参数更少，E2 对照臂）
+  mode: add                      # ★ 默认口径 = add（零初始化残差 `item_emb + proj(content)`）。
+                                 #    训练起点逐位等价纯行为基线 ⇒ 指标差异可完全归因于内容。
+                                 #    依据 M2.6b 实测（debug 档 8 epoch、seed 42、同一评估子集）：
+                                 #      concat 的 Linear 会自由重学整个物品表示空间
+                                 #      （训练后融合表与原 item_emb 余弦仅 0.0097），
+                                 #      SASRec 上整模型 −1.1pp；add 是唯一在 SASRec 与多兴趣
+                                 #      两种架构上都跑正的口径（+0.0024 / +0.0093 ndcg@10）。
+                                 #    concat 保留为 E2 对照臂（显式写 content_mode: concat）。
+                                 #    ⚠️ 复核状态见 docs/progress.md §4.1 M2.6b「口径锁定」段
   ranking_side: true             # 排序侧：7:3 加权（M2.6 已实现于 models/content_encoder/fusion.py）
                                  # ⚠️ M2.6 实测（debug 档，logs/content_fusion_eval.json）：
                                  #    后验打分融合无增益 —— val ndcg@10 纯行为 0.7878 /

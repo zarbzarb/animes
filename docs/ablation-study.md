@@ -14,7 +14,7 @@
 | 模块 | 位置 | 解决的问题 |
 |---|---|---|
 | **M1 多兴趣胶囊网络** | SASRec 最后一层自注意力输出之后 | 单一兴趣向量淹没小众偏好 |
-| **M2 内容语义融合** | 候选侧拼接 + 排序侧加权 | 新番无交互数据，召回为 0 |
+| **M2 内容语义融合** | 候选侧（内容向量作输入特征，默认 `add` 零初始化残差）+ 排序侧加权（后验，仅作冷启动在线兜底） | 新番无交互数据，召回为 0 |
 
 消融实验要回答三个问题：
 
@@ -40,37 +40,35 @@
 ### 2.2 具体配置差异（代码层面的开关）
 
 ```yaml
-# configs/experiment.yaml → groups
+# configs/experiment.yaml → E2_ablation.groups
+# 开关名与 scripts/train.py 已落地的口径一致（早期占位的 use_multi_interest /
+# use_content_fusion 会被 from_dict 静默忽略，2026-09-14 已废弃）
 
 E2_1_pure_sasrec:
-  use_multi_interest: false      # 不加胶囊网络，用户表示为单一向量
-  use_content_fusion: false      # 物品表示不含内容向量；排序只用行为分
-  num_interests: null
-  fusion_w_behavior: 1.0
-  fusion_w_content: 0.0
+  arch: sasrec                   # 单向量用户表示（SASRec 原版）
 
 E2_2_multi_interest:
-  use_multi_interest: true
+  arch: multi_interest
   num_interests: 4               # K=4
-  use_content_fusion: false
-  fusion_w_behavior: 1.0
-  fusion_w_content: 0.0
 
 E2_3_content_fusion:
-  use_multi_interest: false
-  use_content_fusion: true
-  fusion_w_behavior: 0.7         # 候选侧拼 512 维内容向量
-  fusion_w_content: 0.3
-  fusion_w_content_cold: 0.5     # 冷启动时提权到 0.5
+  arch: sasrec
+  content_fusion: true           # 候选侧：内容向量作【输入特征】端到端训练
+  content_mode: add              # 零初始化残差 emb + proj(content)（默认口径，见决策 D5）
+  # 对照臂：content_mode: concat（拼接后降维）—— M2.6b 实测在 SASRec 上 −1.1pp
 
 E2_4_full:
-  use_multi_interest: true
+  arch: multi_interest
   num_interests: 4
-  use_content_fusion: true
-  fusion_w_behavior: 0.7
-  fusion_w_content: 0.3
-  fusion_w_content_cold: 0.5
+  content_fusion: true
+  content_mode: add
 ```
+
+> ⚠️ **与早期设计稿的差异（按实测证据收敛，2026-09-14）**：本文件早先把 E2-3 描述为
+> 「拼接 512 维内容向量 → 线性层降回 64 维」并叠加**排序侧 7:3 加权**。
+> 实测后改为：**候选侧为主口径，且用 `add` 而非 `concat`**（`concat` 会把物品表示空间重学
+> 一遍，SASRec 上整模型 −1.1pp）；**排序侧后验加权无增益**，不再作为消融组，
+> 只保留为「冷启动在线兜底」的可选路径。证据：`progress.md` §4.1（M2.6 / M2.6b）与 §6 决策 D5。
 
 ### 2.3 各配置的模型结构差异
 
@@ -87,16 +85,16 @@ flowchart TB
         C2 --> U2[4 个兴趣向量]
         U2 --> P2["score = max_k(h_k · item_emb)"]
     end
-    subgraph E23["E2-3 + 内容融合"]
-        S3[物品嵌入+位置嵌入] --> A3[2层因果自注意力]
+    subgraph E23["E2-3 + 内容融合（候选侧 add）"]
+        S3["物品表示 = item_emb + proj(内容向量)<br/>（零初始化残差，同一张表供输入与打分）"] --> A3[2层因果自注意力]
         A3 --> U3[单一用户向量 h]
-        U3 --> P3["behavior = h · item_emb<br/>content = h · content_vec<br/>score = 0.7·b + 0.3·c"]
+        U3 --> P3["score = h · table[v]<br/>table = item_emb + proj(content)"]
     end
-    subgraph E24["E2-4 完整"]
-        S4[物品嵌入+位置嵌入] --> A4[2层因果自注意力]
+    subgraph E24["E2-4 完整（多兴趣 + 候选侧内容）"]
+        S4["物品表示 = item_emb + proj(内容向量)"] --> A4[2层因果自注意力]
         A4 --> C4[动态路由 K=4]
         C4 --> U4[4 个兴趣向量]
-        U4 --> P4["per-capsule: max_k(...)<br/>+ 内容融合 7:3"]
+        U4 --> P4["per-capsule: max_k(h_k · table[v])<br/>内容作用于【表示层】，不在分数层加权"]
     end
 ```
 
@@ -105,12 +103,14 @@ flowchart TB
 | 细节 | 说明 |
 |---|---|
 | E2-2 的打分方式 | 4 个胶囊分别与本物品算内积，取 **max**（MIND 的做法），而不是平均 |
-| E2-3 的物品表示 | 物品嵌入(64) 拼接 内容向量(512) → 经线性层压回 64 维，再算内积 |
-| E2-4 的融合顺序 | 先算各胶囊行为分 → 取 max → 再与内容分 7:3 加权 |
-| 参数对齐 | E2-3 / E2-4 引入的额外线性层参数量需报告，说明"增益不是靠加参数堆出来的" |
+| E2-3 的物品表示 | `table = item_emb(64) + proj(content(512))`（零初始化残差），投影层 **+32,832 参数**；训练起点逐位等价基准，指标差异可完全归因于内容 |
+| E2-4 的融合顺序 | 物品表示先经融合表（同一 `repr_provider`，输入与打分共用），再由各胶囊取 max 内积 —— **内容作用于表示层，不在分数层加权** |
+| 参数对齐 | E2-3 / E2-4 引入的额外参数（`add` 32,832 / `concat` 36,928）必须在论文中报告，说明"增益不是靠加参数堆出来的" |
 | 训练轮数 | 全部 200 epoch 上限 + 早停 patience=10，不允许某组多训 |
 
-> ⚠️ **容易出错的地方**：E2-3 若直接把 512 维内容向量拼上去而不降维，模型参数量暴增，指标提升可能只是因为"参数多了"。必须控制变量，并在论文中报告各组参数量。
+> ⚠️ **容易出错的地方**：内容向量 512 维若不降维就直接参与内积，参数量会暴增，指标提升可能只是因为"参数多了"。
+> 必须控制变量并在论文中报告各组参数量。`add` 口径只新增 32,832 参数（占基准 1,107,328 的 **2.97%**），
+> 且零初始化使训练起点**严格等价基准** —— 这也正是它比 `concat` 更适合做消融的原因。
 
 ---
 

@@ -52,8 +52,10 @@ E1_overall:
     - { name: popularity, impl: models/baselines/popularity.py, params: { freq_from: train } }
     - { name: itemcf,  impl: models/baselines/itemcf.py,  params: { topk_sim: 200 } }
     - { name: gru4rec, impl: models/baselines/gru4rec.py, params: { hidden_size: 64, num_layers: 1 } }
-    - { name: sasrec,  impl: models/sasrec/model.py,      params: { use_multi_interest: false, use_content_fusion: false } }
-    - { name: ours,    impl: models/multi_interest/model.py, params: { use_multi_interest: true, use_content_fusion: true } }
+    # 2026-09-14：开关名与 scripts/train.py 已落地的口径对齐（原 use_multi_interest /
+    # use_content_fusion 是早期占位名，会被 from_dict 静默忽略）；内容融合取 add 口径。
+    - { name: sasrec,  impl: models/sasrec/model.py,      params: { arch: sasrec } }
+    - { name: ours,    impl: models/multi_interest/model.py, params: { arch: multi_interest, num_interests: 4, content_fusion: true, content_mode: add } }
   test_set: full
   metrics: [hr@5, hr@10, ndcg@5, ndcg@10, mrr]
   note: popularity 无需训练、itemcf 无需训练；三个神经模型 x 3 种子 = 9 次训练
@@ -69,10 +71,14 @@ E2_ablation:
     # ⚠️ "内容融合"取【候选侧】口径（内容向量作为输入特征端到端训练）。
     #    排序侧（后验打分加权 7:3）经 M2.6 实测无增益，不作为消融组，
     #    相关证据见 docs/progress.md §4.1 M2.6 与 logs/content_fusion_eval.json。
+    # ⚠️ 内容融合的默认口径 = **add**（零初始化残差）。依据 M2.6b 实测：concat 的
+    #    Linear 会重学整个物品表示空间（与原 item_emb 余弦仅 0.0097），SASRec 上
+    #    整模型 −1.1pp；add 起点逐位等价基线，在两架构上均跑正。concat 仍可用，
+    #    显式写 content_mode: concat 即可（作为对照臂）。
     E2_1_pure_sasrec:      { arch: sasrec }                         # 复用 E1 sasrec，无需新训练
     E2_2_multi_interest:   { arch: multi_interest, num_interests: 4 }   # M2.5
-    E2_3_content_fusion:   { arch: sasrec,         content_fusion: true, content_mode: concat }
-    E2_4_full:             { arch: multi_interest, num_interests: 4, content_fusion: true, content_mode: concat }
+    E2_3_content_fusion:   { arch: sasrec,         content_fusion: true, content_mode: add }
+    E2_4_full:             { arch: multi_interest, num_interests: 4, content_fusion: true, content_mode: add }
   test_set: full
   metrics: [hr@5, hr@10, ndcg@5, ndcg@10]
   report_params: true          # 报告参数量，证明增益不来自参数增长

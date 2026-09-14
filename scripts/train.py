@@ -194,7 +194,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                     action="store_false",
                     help="显式关闭候选侧内容融合（覆盖配置）")
     ap.add_argument("--content-mode", default=None, choices=["concat", "add"],
-                    help="候选侧融合方式：concat（拼接后降维，默认）/ add（相加）")
+                    help="候选侧融合方式：add（零初始化残差，默认）/ "
+                         "concat（拼接后降维，对照臂）")
     ap.add_argument("--seed", type=int, default=None,
                     help="只跑这一个种子；默认跑档位定义的全部种子")
     ap.add_argument("--epochs", type=int, default=None, help="覆盖档位的 max_epochs")
@@ -332,7 +333,7 @@ def main(argv=None) -> int:
     fusion_yaml = dict(model_yaml.get("content_fusion") or {})
     use_content = (bool(args.content_fusion) if args.content_fusion is not None
                    else bool(fusion_yaml.get("candidate_side", False)))
-    content_mode = str(args.content_mode or fusion_yaml.get("mode") or "concat")
+    content_mode = str(args.content_mode or fusion_yaml.get("mode") or "add")
     content_matrix = None
     content_file = None
     if use_content:
@@ -407,7 +408,7 @@ def run_one_seed(
     eval_data, ks, device, n_items: int, n_leaked: int,
     ckpt_dir: str, log_dir: str,
     arch: str = "sasrec", mi_cfg: MultiInterestConfig = None,
-    content_matrix=None, content_mode: str = "concat",
+    content_matrix=None, content_mode: str = "add",
     content_file: str = None,
 ) -> dict:
     """跑一个种子：建模型 → 训练 → 存最优权重 → 记录报告。"""

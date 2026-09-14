@@ -1,6 +1,6 @@
 # 项目进度总览 · AniRec
 
-> **快照时间**：2026-09-14 16:05 ｜ **最新完成里程碑**：**M2.6b 候选侧内容融合（端到端拼接落地；concat 无增益、零初始化残差模式 +0.3pp 首次跑正）** ｜ **下一里程碑**：M2.7 对比基线
+> **快照时间**：2026-09-14 16:20 ｜ **最新完成里程碑**：**M2.6b 候选侧融合 + 内容融合默认口径锁定（`add`，五处对齐并由单测锁死）** ｜ **下一里程碑**：M2.7 对比基线 ｜ **进行中**：dev 档 30 epoch 四组复核（见 §4.1「口径锁定」）
 > **当前提交**：以 `git log -1 --oneline` 为准（本文档不写死哈希，避免每次提交后过期）
 >
 > 本文件只回答三个问题：**做到哪了**（§1–2）／**环境撑不撑得住**（§3）／**下一步做什么**（§4–5）。
@@ -14,7 +14,7 @@
 |---|---|---|---|
 | 阶段 0　项目初始化 | — | ✅ 完成 | 目录骨架 + 14 份设计文档 + GitHub 仓库（`zarbzarb/animes`） |
 | **阶段 1　数据预处理与数据集构建** | 15% | ✅ **完成并通过验收** | 7 个脚本 + 全部数据产物 + 8 条实测口径，验收 31/31 |
-| 阶段 2　核心算法与对比实验 | 35% | 🔵 **进行中 80%** | **M2.6 两条融合路径均完成**：后验加权无增益（7:3≈纯行为、冷启动 5:5 更差）；候选侧 concat 亦无稳定增益（SASRec −1.1pp / 多兴趣 +0.6pp），但**同权重消融证明内容通路净贡献 +0.053 ndcg@10**（问题在 concat 重学了物品空间）；**零初始化残差（add）模式首次跑正 0.7895 > 基线 0.7871**。⚠️ 主协议无真冷启动物品，内容收益预期在 E3 验证；下一步 M2.7 基线（ItemCF / GRU4Rec / 热度） |
+| 阶段 2　核心算法与对比实验 | 35% | 🔵 **进行中 80%** | **M2.6 两条融合路径均完成**：后验加权无增益（7:3≈纯行为、冷启动 5:5 更差）；候选侧 concat 亦无稳定增益（SASRec −1.1pp / 多兴趣 +0.6pp），但**同权重消融证明内容通路净贡献 +0.053 ndcg@10**（问题在 concat 重学了物品空间）；**零初始化残差（add）模式首次跑正 0.7895 > 基线 0.7871**。⚠️ 主协议无真冷启动物品，内容收益预期在 E3 验证；**内容融合默认口径已锁定为 `add`**（configs 五处对齐 + 配置一致性单测锁死，dev 档 30 epoch 复核进行中）；下一步 M2.7 基线（ItemCF / GRU4Rec / 热度） |
 | 阶段 3　全栈系统与联调 | 35% | ⬜ 未开始 | 依赖阶段 2 的模型权重与嵌入矩阵 |
 | 阶段 4　测试 | 15% | ⬜ 未开始 | 依赖阶段 3 的可运行系统 |
 
@@ -214,7 +214,7 @@ Windows 因哈希不符拒绝加载 → 设备 Code 52 → CUDA 报告无设备�
 | **M2.4** ✅ | SASRec 基座 | 2 层 2 头 hidden 64 dropout 0.2 + BCE 负采样 + 早停（看 val NDCG@10, patience=10） | `models/sasrec/{model,config,train}.py`、`models/checkpoint/`、`scripts/train.py` | ✅ **已完成**：smoke 档 loss 0.66→0.20 稳定下降，val ndcg@10 **0.716**（随机基线 0.045）；复评与记录**逐位一致**；端到端 **17.6 s/epoch**。⚠️ **附带发现热度先验主导指标**（见 §4.2） |
 | **M2.5** ✅ | 多兴趣胶囊 | K=4 动态路由（3 次迭代）接在 SASRec 输出后；记录胶囊两两余弦相似度检测塌缩 | `models/multi_interest/{config,capsule,model}.py` | ✅ **已完成**：全仓 318 例全绿（新增 42）；debug 档 8 epoch 固定预算 val ndcg@10 **0.7624**（基线同预算 0.7871，路由未收敛属预期）；相似度 0.699（阈值 <0.7 边缘达标，无死胶囊）；新增参数恰好 +16,384（=路由 W）。⚠️ 发现并修复 **squash 与 0.02² 初始化的量级冲突**（见 §4.1 M2.5） |
 | **M2.6** ✅ | 内容融合（排序侧） | 排序侧 7:3 加权 + 冷启动 5:5 自动切权 | `models/content_encoder/fusion.py`、`scripts/eval_content_fusion.py` | ✅ `fusion_score()` 契约达成；实测**后验融合无增益**（见 §4.1 M2.6），E2 按此口径如实报告 |
-| **M2.6b** ✅ | 内容融合（候选侧） | 内容向量拼进物品表示、端到端训练；`concat` 与零初始化残差 `add` 两臂 | `models/content_encoder/model.py`、`models/sasrec/model.py` 的 `repr_provider` | ✅ 实现+36 例测试；`add` 臂 **0.7895 > 基线 0.7871**（+0.3pp，单种子 8 epoch）；concat 无稳定增益（见 §4.1 M2.6b） |
+| **M2.6b** ✅ | 内容融合（候选侧） | 内容向量拼进物品表示、端到端训练；`concat` 与零初始化残差 `add` 两臂 | `models/content_encoder/model.py`、`models/sasrec/model.py` 的 `repr_provider` | ✅ 实现 + 39 例单测（全仓 375 例全绿）；`add` 臂 **0.7895 > 基线 0.7871**（单种子 8 epoch）；**默认口径锁定 `add`**（决策 D5，dev 档 30 epoch 复核中）；concat 无稳定增益（见 §4.1 M2.6b） |
 | **M2.7** | 对比基线 | ItemCF（共现 + 余弦，TopK 200 邻居）、GRU4Rec（隐藏 64，1 层） | `models/baselines/*.py` | 与本文模型**共用同一划分 / 负样本池 / 评估器 / 早停策略** |
 | **M2.8** | 实验编排 | `run_experiments.py` 按 `configs/experiment.yaml` 串起 E1~E4，落盘 `experiments/{id}/`，回写 `result-analysis.md` | `scripts/run_experiments.py`、`scripts/plot_results.py` | 一次命令跑完四组；输出目录结构与 `evaluation-plan.md` 8.2 一致 |
 | **M2.9** | 填表与作图 | 真实指标填入 `result-analysis.md` / `ablation-study.md`，生成 4 张图 | 指标表 + `figures/*.png` | **每个数字都有出处（实验目录名）**，无出处不许填 |
@@ -455,6 +455,36 @@ concat +0.0531、SASRec+add +0.0350、多兴趣+add +0.0451 —— 三者都显�
 * 多兴趣模型的 provider 挂在 `backbone` 上，训练脚本按 `model.repr_provider`
   取时 `AttributeError` → 顶层统一暴露该属性。
 
+#### 内容融合口径锁定 ✅（2026-09-14，决策 D5）
+
+**决定**：候选侧内容融合的**默认口径 = `add`（零初始化残差）**，`concat` 降级为**对照臂**。
+
+**依据**：上表 debug 档实测 —— `concat` 在 SASRec 上 −1.1pp、在多兴趣上只 +0.6pp（方向不一致）；
+`add` 在两架构上都转正（+0.0024 / +0.0093），同权重消融方向也一致。
+`concat` 的失败可归因到**实现方式**（把物品空间重学一遍），不是内容没信号。
+
+**落点（五处，任何一处不一致都会"静默换口径"）**：
+
+| 位置 | 默认 | 说明 |
+|---|---|---|
+| `ItemContentFusion(mode=...)` | `add` | 类默认 |
+| `build_model(content_mode=...)` | `add` | 工厂默认（训练与 checkpoint 重建共用同一路径） |
+| `models/checkpoint/io.py` 兜底值 | `add` | 防手工构造 meta 时错配 |
+| `configs/model.yaml` → `content_fusion.mode` | `add` | 训练脚本读它 |
+| `configs/experiment.yaml` → E2_3 / E2_4 | `add` | 消融组口径 |
+
+新增 `TestDefaultModeConfigConsistency`（3 例，直接断言代码默认 + 两个 yaml 的默认）：
+口径一旦漂回 `concat` 立刻变红。这类错配的特点是**权重形状一致、指标也算得出来**，
+肉眼看不出来，只能靠测试挡。
+顺带把 E1 的开关名从早期占位的 `use_multi_interest / use_content_fusion`
+对齐为已落地的 `arch / content_fusion`（旧名会被 `from_dict` **静默忽略**）。
+
+**复核状态**：dev 档 30 epoch（`eval_user_ratio=0.20` ≈ 13,067 评估用户）四组串行：
+`sasrec` 纯行为 → `sasrec+add` → `multi_interest` 纯行为 → `multi_interest+add`，
+`--tag m26b_dev_*`，日志 `logs/dev_m26b_*.log`、报告 `logs/train_multi_interest_content_v1_m26b_dev_*_dev_seed42.json`。
+⚠️ **若 dev 档 `add` 不再为正，则回退默认值并同步本文档** ——
+当前默认值的依据是 8 epoch 单种子，属"方向可信、幅度不可信"。
+
 
 
 
@@ -599,6 +629,7 @@ E1~E4 + HPO（60 组）+ 补充实验，再乘 3 个随机种子，合计约 **2
 | D2 | **训练档位** | ✅ **已定（2026-09-12）** | 五档位制 `smoke / debug / dev / main / full`，配置见 `configs/scale.yaml`；正式档取 `main` = 10% 用户 |
 | D3 | **正式实验规模** | ✅ **已定稿（2026-09-12，M2.4 端到端实测后最终确认）** | **`main` 档 = 10% 用户，不上调 20%**。理由：M2.4 实测端到端 416 s/epoch，10% 档 E1 约 **1.3 天**、全矩阵约 **2.5 天**；20% 会让 E1 单独吃掉 2.6 天，而 10% 已有 13 万用户 / 1,092 万样本，结论强度足够。`full` 档保持"有余力才跑"。 |
 | D4 | 是否现在装 `faiss` | 待定 | 阶段 2 召回可先用 numpy 精确内积（15,687 物品规模完全够），**faiss 推迟** |
+| D5 | **内容融合口径** | ✅ **已定（2026-09-14，M2.6b）** | **候选侧 `add`（零初始化残差）为默认，`concat` 降为对照臂**。依据 debug 档实测（concat 在 SASRec 上 −1.1pp、add 在双架构上转正），五处默认值已对齐 + `TestDefaultModeConfigConsistency` 锁死；**dev 档 30 epoch 复核进行中，不达预期即回退**（§4.1） |
 
 ### 6.1 D1 实施清单（路线 A：更新驱动 + 装 CUDA 版 torch）
 
@@ -641,6 +672,7 @@ E1~E4 + HPO（60 组）+ 补充实验，再乘 3 个随机种子，合计约 **2
 | 合规题材仍在池内 | 答辩可能被问 | 已在 `evaluation-plan.md` 第十节如实披露 + 评估期屏蔽方案 |
 | 冷启动为模拟口径 | 结论需限定表述 | 已记录 holdout 口径与 14.07% 训练信号剥离代价 |
 | 指标表格可能被"先填个好看的数" | 学术不端 | `result-analysis.md` 填报规范：**无出处不许填** |
+| **实验口径分散在代码默认值与 `configs/` 里** | 任一处不同步（如训练用 `concat`、重建建成 `add`）就会在「权重形状一致、指标也算得出来」的情况下换掉口径，肉眼极难发现 | ① M2.6b 起五处默认值统一为 `add`；② `TestDefaultModeConfigConsistency` 直接断言两个 yaml 与代码默认一致；③ 口径变更必须同时更新本文档 §6 决策表与 `models/content_encoder/README.md` |
 
 ---
 

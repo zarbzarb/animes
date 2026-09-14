@@ -53,8 +53,14 @@ ItemContentFusion(content_matrix, hidden_size, mode="concat"|"add", dropout=0.0)
     .forward(item_weight [V,H]) -> table [V,H]
 
 build_model(arch, sasrec_cfg, n_items, content_matrix=None,
-            content_mode="concat", mi_cfg=None) -> nn.Module
+            content_mode="add", mi_cfg=None) -> nn.Module
 ```
+
+**默认口径 = `add`**（零初始化残差）。默认值分散在四处 —— 类默认、
+`build_model` 默认、`configs/model.yaml`、`configs/experiment.yaml` 的 E2 组
+—— 现已全部对齐为 `add`，并由单测 `TestDefaultModeConfigConsistency`
+锁住（任何一处漂回 `concat` 都会在"权重形状一致、指标算得出来"的情况下
+悄悄换掉实验口径）。
 
 * `SASRec` / `MultiInterestSASRec` 都通过 `repr_provider` 注入；
   **输入侧与输出侧都必须经 `SASRec.item_table()` 取表**，否则会出现
@@ -70,15 +76,15 @@ build_model(arch, sasrec_cfg, n_items, content_matrix=None,
    后者会丢掉「PAD 行不接收梯度」的保障，PAD 行会随训练漂移出零。
 2. **内容矩阵是 buffer，不是参数**。离线 PCA 产物，不可学；
    参数增量只剩投影层，可精确核算。
-3. **`mode` 决定参数增量**：
-   * `concat`：`(H + D)·H + H` = **36,928**（H=64, D=512），占基线 1,107,328 的 3.3%
-   * `add`：`D·H + H` = **32,832**（+ 基座嵌入本身不变）
+3. **`mode` 决定参数增量**（**默认 = `add`**）：
+   * `add`（默认）：`D·H + H` = **32,832**（+ 基座嵌入本身不变），占基线 1,107,328 的 2.97%
+   * `concat`（对照臂）：`(H + D)·H + H` = **36,928**，占 3.33%
 
 ---
 
-## 三、`concat` 与 `add` 的关键差异（实测教训）
+## 三、`add`（默认）与 `concat`（对照臂）的关键差异（实测教训）
 
-| | concat | add（零初始化残差） |
+| | concat（对照臂） | add（零初始化残差，**默认口径**） |
 |---|---|---|
 | 形式 | `Linear([emb, content])` | `emb + Linear(content)` |
 | 起点 | 不等价基线：线性层可自由重学整个物品空间 | **严格等价基线**（零权重+零 bias） |
@@ -153,10 +159,11 @@ python scripts/build_content_vectors.py
 # 排序侧后验融合：val 扫权重 + test 确认 + 冷启动快检
 python scripts/eval_content_fusion.py
 
-# 候选侧结构级融合（训练）
-python scripts/train.py --scale debug --model sasrec --content-fusion --content-mode add
-python scripts/train.py --scale debug --model sasrec --content-fusion            # concat
-python scripts/train.py --scale debug --model sasrec --no-content-fusion         # 纯基线
+# 候选侧结构级融合（训练）；不写 --content-mode 即取默认口径 add
+python scripts/train.py --scale debug --model sasrec --content-fusion
+python scripts/train.py --scale debug --model sasrec --content-fusion --content-mode concat  # 对照臂
+python scripts/train.py --scale debug --model sasrec --no-content-fusion                    # 纯基线
+python scripts/train.py --scale debug --model multi_interest --content-fusion               # 多兴趣 + 内容
 
 # 单测
 python -m pytest tests/test_content/ -q

@@ -8,9 +8,17 @@
 0.7878，冷启动 5:5 → 0.6350 对 7:3 0.6414。
 
 本模块是**结构级**融合：把内容向量拼进物品表示，让模型自己在训练中学
-「什么时候该信任内容、信任到什么程度」：
+「什么时候该信任内容、信任到什么程度」。两种口径：
 
-    table = Linear( [ item_emb[v] , content[v] ] )      # (H + D) -> H
+    add（默认）  table = item_emb[v] + proj(content[v])           # D -> H，零初始化
+    concat       table = Linear([ item_emb[v], content[v] ])      # (H + D) -> H
+
+**默认口径是 `add`（零初始化残差）**，依据是 M2.6b 实测：concat 的 Linear 会
+自由重学整个物品表示空间（训练后融合表与原 `item_emb` 余弦仅 **0.0097**，
+等于把 tie-embedding 已学到的表示又学一遍），SASRec 上整模型 **−1.1pp**；
+而零初始化残差起点严格等价基线，在 SASRec 与多兴趣两种架构上都跑正
+（+0.0024 / +0.0093 ndcg@10，debug 档 8 epoch 单种子）。concat 保留为
+**对照臂**（工程上仍合法，只是不作默认）。
 
 为什么这样该有增益（H4 假设）
 ------------------------------
@@ -24,19 +32,23 @@
 ----------------------------------
 1. **内容向量是 buffer，不是参数**：不参与梯度（离线 PCA 产物，
    训练它既无意义也会破坏「内容通路固定」的可解释性）。
-2. **新增参数恰好是投影层**：concat 模式 `(H + D) · H + H`，
-   hidden=64 / D=512 时为 36,928（占基线 1,107,328 的 3.3%）。
-   E2 报告须同时给出这个数字。
+2. **新增参数恰好是投影层**：add `D · H + H` = **32,832**，
+   concat `(H + D) · H + H` = **36,928**（hidden=64 / D=512，分别占基线
+   1,107,328 的 2.97% / 3.33%）。E2 报告须同时给出这个数字 ——
+   两种口径参数量不同，跨口径比指标必须一起看。
 3. **PAD 行恒零**：`SASRec.score/encode` 依赖 `table[0] == 0`
    （PAD 位置不产生语义、也不该被候选打分命中）。投影层有 bias，
    所以必须显式把第 0 行清零。
 4. **训练协议不变**：`fit()` 照旧只调 `model.score()`，1 正 1 负 BCE、
    早停、评估器全部不动 —— 与 M2.4 基线的唯一差异就是物品表示。
+5. **注入必须走 `F.embedding(seq, table, padding_idx=PAD_ITEM)`**：
+   裸 `table[seq]` 会让 PAD 行接收梯度并漂移出零（已踩过，单测锁定）。
 
-投影层初始化沿用 SASRec 论文口径 N(0, 0.02²)，bias 置零：这样训练
-起点处「内容那一半」的初始贡献为零，模型是从「等价于纯行为基座」
-出发再学出来的 —— 若训练后指标没变，说明模型选择忽略内容，
-这本身就是 E2 要报告的结论，而不是初始化造成的假象。
+投影层 bias 恒置零；权重初始化按 mode 分叉（见 `reset_parameters`）：
+concat 用 N(0, 0.02²)（SASRec 论文口径），add 用**全零**。两种口径的
+「训练起点」都尽可能干净，其中 add 的起点是**逐位等价于纯行为基座** ——
+若训练后指标没变，说明模型选择忽略内容，这本身就是 E2 要报告的结论，
+而不是初始化造成的假象。
 """
 
 from __future__ import annotations
@@ -75,7 +87,7 @@ class ItemContentFusion(nn.Module):
         self,
         content_matrix: torch.Tensor,
         hidden_size: int,
-        mode: str = "concat",
+        mode: str = "add",
         dropout: float = 0.0,
     ):
         """
@@ -85,10 +97,10 @@ class ItemContentFusion(nn.Module):
                        行序约定「第 v 行 = 物品 idx v」。构造时会做
                        防御性 L2 归一（与 `fusion.ContentScorer` 同一约定）。
         hidden_size    基座 hidden 维 H。
-        mode           `"concat"`（拼接后降维，默认，对应项目文档口径）
-                       或 `"add"`（**残差**：`item_emb + proj(content)`；
-                        参数更少，且训练起点等价于基线，适合回答
-                        "内容有没有增量"这个问题）。
+        mode           `"add"`（**残差**：`item_emb + proj(content)`，**默认**；
+                        零初始化 ⇒ 训练起点严格等价基线，回答"内容有没有
+                        增量"这个问题最干净）
+                       或 `"concat"`（拼接后降维，参数更多，对照臂）。
         dropout        作用在融合后的物品表示上。默认 0.0 —— 与基线保持
                         一致的自由度，避免把「正则强度不同」混进消融差异。
         """
@@ -168,13 +180,13 @@ class ItemContentFusion(nn.Module):
             [item_weight, self.content], dim=-1)
         out = self.proj(x)
         if self.mode == "add":
-            # 残差口径：table = item_emb + proj(content)。
+            # 残差口径（默认）：table = item_emb + proj(content)。
             # ⚠️ 这是与 concat 的**关键差异**：concat 的 Linear 可以自由重学
-            # 整个物品空间（实测训练后融合表与原嵌入余弦仅 0.0097，等于
-            # 把 tie-embedding 已有的表示又学了一遍，白付优化代价）；
-            # 残差口径下 proj 初始化很小（N(0,0.02²)），训练**起点就等价于
-            # 基线**，模型只需要学"内容带来的增量"。要做"内容到底有没有用"
-            # 这个判断，残差口径更干净；concat 更接近项目文档的原始设计。
+            # 整个物品空间（实测训练后融合表与原嵌入余弦仅 0.0097，等于把
+            # tie-embedding 已有的表示又学了一遍，白付优化代价，SASRec 上
+            # 整模型 −1.1pp）；残差口径下 proj 零初始化，训练**起点就逐位
+            # 等价于基线**，模型只需要学"内容带来的增量" —— 要做"内容到底
+            # 有没有用"这个判断，残差口径更干净。concat 保留为对照臂。
             out = out + item_weight
         out = self.emb_dropout(out)
         # PAD 行乘 0：既保证语义正确（PAD 不该有表示），也保证「全 PAD 序列」
@@ -205,7 +217,7 @@ def build_model(
     sasrec_cfg,
     n_items: int,
     content_matrix: Optional[torch.Tensor] = None,
-    content_mode: str = "concat",
+    content_mode: str = "add",
     content_dropout: float = 0.0,
     mi_cfg=None,
 ):
@@ -222,7 +234,7 @@ def build_model(
     sasrec_cfg      `SASRecConfig`（multi_interest 时为 None，用 mi_cfg.sasrec）。
     n_items         物品池规模（校验内容矩阵行数用）。
     content_matrix  `[n_items+1, D]`；为 None 时不加融合。
-    content_mode    `"concat"` / `"add"`。
+    content_mode    `"add"`（**默认**，零初始化残差）/ `"concat"`（对照臂）。
     mi_cfg          `MultiInterestConfig`，arch="multi_interest" 时必填。
     """
     from models.sasrec.model import SASRec
