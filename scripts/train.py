@@ -72,7 +72,7 @@ from models.content_encoder.model import (  # noqa: E402
     load_content_matrix_for_fusion,
 )
 from models.data.negatives import DEFAULT_NEG_SEED  # noqa: E402
-from models.data.user_subset import subset_order  # noqa: E402
+from models.data.user_subset import resolve_scale_users  # noqa: E402
 from models.eval.evaluator import build_eval_data, drop_leaked_samples, evaluate  # noqa: E402
 from models.multi_interest.config import MultiInterestConfig  # noqa: E402
 from models.multi_interest.model import MultiInterestSASRec  # noqa: E402
@@ -135,16 +135,15 @@ def resolve_scale(scale_cfg: dict, name: str) -> dict:
 
 
 def select_rows(n_users: int, ratio: float, order: np.ndarray) -> np.ndarray:
-    """从哈希全序 `order` 中取前 `ratio` 比例的位置，返回**升序**行号。
+    """⚠️ 已废弃的兼容壳：请用 `models/data/user_subset.py::rows_from_order()`。
 
-    用 `order` 的前缀而不是另抽一次，是"嵌套"这条不变式的全部实现所在
-    （见 `configs/scale.yaml` 的 invariants）。返回升序是为了让下游
-    （负采样、评估输入构造）的遍历顺序稳定、缓存友好。
+    保留它只为不让历史上引用过 `scripts.train.select_rows` 的临时脚本直接崩掉；
+    逻辑本身只有一个实现（`rows_from_order`），这里只是转发。
     """
-    if ratio >= 1.0:
-        return np.arange(n_users, dtype=np.int64)
-    n_keep = max(1, min(n_users, int(round(n_users * float(ratio)))))
-    return np.sort(order[:n_keep].astype(np.int64))
+    from models.data.user_subset import rows_from_order
+
+    _ = n_users
+    return rows_from_order(order, float(ratio))
 
 
 class LimitedLoader:
@@ -270,19 +269,19 @@ def main(argv=None) -> int:
     # 与数组顺序无关」。若改用行号，一旦 stage1 重跑导致 umap 顺序变化，
     # 同一个 ratio 会选中完全不同的一批用户，历史实验立刻失去可比性。
     # 这里先把 umap 的 (uid -> row) 反转成「行号 -> uid」的稠密数组。
+    #
+    # ⚠️「档位 -> 训练/评估行号」这段逻辑**只有一份实现**，在
+    # `models/data/user_subset.py::resolve_scale_users`（M2.7 从本文件抽出，
+    # 因为 `run_baselines.py` 与 `diagnose_popularity_bias.py` 都要用）。
+    # 三份拷贝各自演化 ⇒ 各脚本报出"每一行来自不同用户子集"的不可比指标，
+    # 而且不会报错。不要再把它内联回来。
     t0 = time.time()
     uids = np.empty(n_users, dtype=np.int64)
     for uid, row in ds["umap"].items():
         uids[int(row)] = int(uid)
-    order = subset_order(uids, seed=SUBSET_SEED)
-    train_rows = select_rows(n_users, float(spec["user_ratio"]), order)
-    # 评估用户 = 本档位用户的子集（比例相对**本档位**，不是全量用户池）
-    n_eval_cap = max(1, int(round(train_rows.size * float(spec["eval_user_ratio"]))))
-    # train_rows 已按行号升序，这里要的是"同一把哈希尺子的前缀"，
-    # 所以从 order 里取，而不是从升序的 train_rows 里取。
-    train_row_set = np.zeros(n_users, dtype=bool)
-    train_row_set[train_rows] = True
-    eval_rows = np.sort(order[train_row_set[order]][:n_eval_cap].astype(np.int64))
+    train_rows, eval_rows = resolve_scale_users(
+        uids, float(spec["user_ratio"]), float(spec["eval_user_ratio"]),
+        seed=SUBSET_SEED)
     if args.eval_users is not None:
         eval_rows = eval_rows[:int(args.eval_users)]
     logger.info(

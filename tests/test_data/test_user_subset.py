@@ -18,6 +18,8 @@ from models.data.user_subset import (
     kept_user_ids,
     mask_from_order,
     nested_user_subset,
+    resolve_scale_users,
+    rows_from_order,
     subset_order,
     user_hash_keys,
 )
@@ -242,3 +244,74 @@ def test_mask_from_order_edge_cases():
     order = subset_order(uids, seed=42)
     assert mask_from_order(len(uids), order, 0.0).sum() == 0
     assert mask_from_order(len(uids), order, 1.0).all()
+
+
+# =====================================================================
+# rows_from_order / resolve_scale_users（M2.7：从 scripts/train.py 抽出的
+# 「档位 -> 训练/评估行号」唯一实现）
+# =====================================================================
+def _legacy_resolve(n_users: int, user_ratio: float, eval_user_ratio: float,
+                    order: np.ndarray):
+    """**抽取之前的原实现**（scripts/train.py 2026-09-14 之前的内联公式）。
+
+    保留在这里当作对拍基准：公共函数一旦与它不等价，档位规模就变了，
+    历史实验立刻失去可比性 —— 而这类偏差不会报错，只会让指标"稍微不一样"。
+    """
+    n_keep = max(1, min(n_users, int(round(n_users * float(user_ratio)))))
+    train_rows = np.sort(order[:n_keep].astype(np.int64))
+    cap = max(1, int(round(train_rows.size * float(eval_user_ratio))))
+    in_train = np.zeros(n_users, dtype=bool)
+    in_train[train_rows] = True
+    eval_rows = np.sort(order[in_train[order]][:cap].astype(np.int64))
+    return train_rows, eval_rows
+
+
+def test_rows_from_order_is_sorted_and_counts():
+    uids = _make_uids(1000)
+    n = len(uids)                 # ⚠️ _make_uids 会去重，实际个数 ≤ 请求值
+    order = subset_order(uids, seed=42)
+    rows = rows_from_order(order, 0.05)
+    assert rows.size == max(1, round(n * 0.05))
+    assert np.all(np.diff(rows) > 0)          # 升序、无重复
+    assert np.array_equal(rows_from_order(order, 1.0), np.arange(n))
+    assert rows_from_order(order, 0.0).size == 0
+
+
+def test_resolve_scale_users_matches_legacy_formula():
+    """等价性对拍：新公共函数必须与抽取前的内联实现**逐位相同**。
+
+    覆盖真实档位比例（smoke 0.5% / debug 2% / dev 5% / main 10%）
+    与各档的 eval_user_ratio（0.10 / 0.20 / 1.0）。
+    """
+    uids = _make_uids(20_000)
+    order = subset_order(uids, seed=42)
+    for ratio in (0.005, 0.02, 0.05, 0.10, 1.0):
+        for eval_ratio in (0.10, 0.20, 1.0):
+            got = resolve_scale_users(uids, ratio, eval_ratio, seed=42)
+            want = _legacy_resolve(len(uids), ratio, eval_ratio, order)
+            assert np.array_equal(got[0], want[0]), (ratio, eval_ratio, "train")
+            assert np.array_equal(got[1], want[1]), (ratio, eval_ratio, "eval")
+
+
+def test_resolve_scale_users_eval_is_subset_of_train():
+    """评估用户必须全部来自本档位训练用户（不是全量用户池）。"""
+    uids = _make_uids(8000)
+    train_rows, eval_rows = resolve_scale_users(uids, 0.05, 0.20, seed=42)
+    assert np.isin(eval_rows, train_rows).all()
+
+
+def test_resolve_scale_users_nests_across_scales():
+    """档位嵌套：5% 档的训练用户必须全部是 10% 档训练用户的子集。"""
+    uids = _make_uids(20_000)
+    small, _ = resolve_scale_users(uids, 0.05, 0.20, seed=42)
+    large, _ = resolve_scale_users(uids, 0.10, 0.20, seed=42)
+    assert np.isin(small, large).all()
+
+
+def test_resolve_scale_users_eval_ratio_is_relative_to_scale():
+    """评估用户数 = 本档位用户数 × eval_user_ratio（**不是**相对全量池）。"""
+    uids = _make_uids(20_000)
+    train_rows, eval_rows = resolve_scale_users(uids, 0.05, 0.20, seed=42)
+    assert eval_rows.size == int(round(train_rows.size * 0.20))
+    # 若误按全量池算，这个数会变成 round(20000 * 0.20) = 4000
+    assert eval_rows.size != int(round(len(uids) * 0.20))

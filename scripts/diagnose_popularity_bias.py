@@ -68,7 +68,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from models.data.negatives import DEFAULT_NEG_SEED  # noqa: E402
-from models.data.user_subset import subset_order  # noqa: E402
+from models.data.user_subset import resolve_scale_users  # noqa: E402
 from models.eval.evaluator import build_eval_data, drop_leaked_samples, evaluate  # noqa: E402
 
 # 与 scripts/train.py 保持一致：抽样种子固定 42，不随训练种子变化
@@ -123,14 +123,12 @@ def main() -> int:
     uids = np.empty(n_users, dtype=np.int64)
     for uid, row in ds["umap"].items():
         uids[int(row)] = int(uid)
-    order = subset_order(uids, seed=SUBSET_SEED)
-
-    n_keep = max(1, int(round(n_users * float(spec["user_ratio"]))))
-    train_rows = np.sort(order[:n_keep].astype(np.int64))
-    n_eval_cap = max(1, int(round(train_rows.size * float(spec["eval_user_ratio"]))))
-    in_train = np.zeros(n_users, dtype=bool)
-    in_train[train_rows] = True
-    eval_rows = np.sort(order[in_train[order]][:n_eval_cap].astype(np.int64))
+    # ⚠️ 抽样口径**只有一份实现**（M2.7 起）：models/data/user_subset.py::
+    #    resolve_scale_users。不要再把那段公式抄回来 —— 与 scripts/train.py
+    #    不一致时两个脚本会报出不可比的热度基线，而且不报错。
+    train_rows, eval_rows = resolve_scale_users(
+        uids, float(spec["user_ratio"]), float(spec["eval_user_ratio"]),
+        seed=SUBSET_SEED)
     log(f"档位 {args.scale}：训练用户 {train_rows.size:,} / 评估用户 {eval_rows.size:,}")
 
     # ---------- 评估集 ----------
@@ -206,7 +204,7 @@ def main() -> int:
         log(f"   正样本热度 均值 {pos_pop.mean():,.0f} / 中位 {np.median(pos_pop):,.0f}")
         log(f"   负样本热度 均值 {neg_pop.mean():,.0f} / 中位 {np.median(neg_pop):,.0f}")
         log(f"   正负热度倍数 = {pos_pop.mean() / max(1e-9, neg_pop.mean()):.1f}x"
-            "   ← 这个倍数越高，热度先验越容易"蒙对"")
+            "   ← 这个倍数越高，热度先验越容易「蒙对」")
         out["n_distinct_positives"] = int(np.unique(data.positives).size)
 
     # ---------- C 模型 ----------

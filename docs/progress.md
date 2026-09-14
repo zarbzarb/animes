@@ -504,10 +504,22 @@ concat +0.0531、SASRec+add +0.0350、多兴趣+add +0.0451 —— 三者都显�
 | 输入序列 / 负样本 / 指标 / 前向串联 | `dataset.build_eval_inputs` → `negatives.sample_negatives` → `metrics` → `evaluator.evaluate` |
 | 训练循环 + 早停 | `models/sasrec/train.py::fit`（GRU4Rec 直接用，连 patience 单位换算都共用） |
 
-⚠️ **本次抽出了 `resolve_scale_users()`**：原先这段「档位 → 训练/评估用户行号」
-的逻辑在 `scripts/train.py` 与 `scripts/diagnose_popularity_bias.py` 里各有一份，
-M2.7 是第三个调用方。三份拷贝意味着"某天有人只改了其中一处"——
-而这类不一致**不报错**，只会让两个脚本报出不可比的指标。
+⚠️ **本次抽出了 `resolve_scale_users()` 并**真的把两个旧调用方迁了过去**：原先
+「档位 → 训练/评估用户行号」这段逻辑在 `scripts/train.py` 与
+`scripts/diagnose_popularity_bias.py` 里各有一份，M2.7 是第三个调用方。
+三份拷贝意味着"某天有人只改了其中一处"——而这类不一致**不报错**，
+只会让两个脚本报出不可比的指标。现在三处（含 `run_baselines.py`）都调同一个函数，
+并用 `tests/test_data/test_user_subset.py::test_resolve_scale_users_matches_legacy_formula`
+对**抽取前的内联公式**做逐位对拍（smoke/debug/dev/main 四档比例 × 三种
+`eval_user_ratio`）。迁移后三脚本实跑一致：smoke 档均为「训练 6,533 / 评估 653」。
+
+⚠️ 顺带修掉一个**预先存在的语法错误**：`scripts/diagnose_popularity_bias.py`
+有一行 f-string 里嵌了未转义的双引号（`…越容易"蒙对"`），该脚本自那次编辑起
+**一直无法执行**（`SyntaxError`）。因为它是"自查脚本"、不在主链路上，
+所以直到 M2.7 要把抽样口径收敛过去时才发现。修复后实跑通过，
+并与本文件的 train-only 热度口径互为交叉验证：
+诊断脚本（全量 `n_positive`）smoke 0.8655 / 0.6073，
+`run_baselines.py`（仅训练频次）0.8640 / 0.6030 —— 两组数字一致。
 
 **已出的正式数字**（`main` 档 = 10% 用户，`seed 42`，1 正 100 负，
 剔除答案泄漏 1,287/1,532 条；出处见 `logs/baseline_*_main_*.json`）：
@@ -563,7 +575,7 @@ CPU 与 CUDA 结果一致 ⇒ **不是内核问题，是用法错误**；且它�
 改为跨调用累计 + 显式 `reset_stats()`，并加了「累计行数必须等于评估样本数」
 的自检。
 
-**验收**：全仓 **416 例全绿**（新增 41 例基线单测）；三档端到端跑通。
+**验收**：全仓 **421 例全绿**（新增 41 例基线单测 + 5 例抽样口径对拍）；三档端到端跑通。
 
 
 
