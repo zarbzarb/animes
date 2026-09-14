@@ -77,10 +77,10 @@ class MultiInterestSASRec(nn.Module):
     torch.Size([4, 101])
     """
 
-    def __init__(self, cfg: MultiInterestConfig):
+    def __init__(self, cfg: MultiInterestConfig, repr_provider: nn.Module = None):
         super().__init__()
         self.mi_cfg = cfg
-        self.backbone = SASRec(cfg.sasrec)
+        self.backbone = SASRec(cfg.sasrec, repr_provider=repr_provider)
         self.routing = InterestRouting(
             hidden_size=int(cfg.sasrec.hidden_size),
             num_interests=int(cfg.num_interests),
@@ -102,6 +102,17 @@ class MultiInterestSASRec(nn.Module):
     @property
     def num_interests(self) -> int:
         return int(self.mi_cfg.num_interests)
+
+    @property
+    def repr_provider(self):
+        """物品表示提供者（M2.6b 候选侧内容融合）。
+
+        统一暴露在**模型顶层**：基座与多兴趣模型的 provider 都在
+        `SASRec` 上，但调用方（训练脚本、报告、诊断）不该各自记住
+        "多兴趣要多走一层 .backbone" —— 这种路径分歧正是 `--content-fusion`
+        在多兴趣分支第一次就崩掉的原因（AttributeError）。
+        """
+        return self.backbone.repr_provider
 
     # ------------------------------------------------------------------
     # 前向
@@ -148,7 +159,8 @@ class MultiInterestSASRec(nn.Module):
         """
         _, interests = self.encode_interests(input_ids)          # [B, K, H]
 
-        emb_weight = self.backbone.item_emb.weight               # [V, H]
+        # 与基座同一条入口：内容融合（M2.6b）时这里是融合后的物品表示
+        emb_weight = self.backbone.item_table()                  # [V, H]
         if emb_weight.device != candidate_ids.device:
             candidate_ids = candidate_ids.to(emb_weight.device)
 

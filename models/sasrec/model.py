@@ -17,6 +17,20 @@
 「输出层没见过某物品」与「输入层没见过某物品」不会出现两种语义。
 消融时可用 `share_item_emb=false` 单独关掉。
 
+物品表示注入（M2.6b 内容融合的挂载点）
+-------------------------------------
+构造时可传 `repr_provider`，它把行为嵌入变换成最终使用的物品表示：
+
+    table = repr_provider(item_emb.weight)      # [V, H]
+
+`encode()` 与 `score()` **都经 `item_table()` 取表**，因此输入侧与输出侧
+永远一致。不需要融合时传 None，行为与 M2.4 **逐位相同**（有回归测试）。
+这条设计让「候选侧内容融合」不必改动 SASRec 主体，也让 M2.5 的多兴趣模型
+能原样复用（`MultiInterestSASRec(cfg, repr_provider=...)`）。
+
+⚠️ 取表后用 `F.embedding(..., padding_idx=0)` 而不是裸张量索引：前者保留
+「PAD 行不接收梯度」的保障，否则 PAD 行会随训练漂移出零。
+
 接口契约（Agent 与评估器都依赖）
 --------------------------------
 ::
@@ -60,6 +74,7 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.sasrec.config import SASRecConfig
 
@@ -201,10 +216,25 @@ class SASRec(nn.Module):
     torch.Size([4, 101])
     """
 
-    def __init__(self, cfg: SASRecConfig):
+    def __init__(
+        self,
+        cfg: SASRecConfig,
+        repr_provider: Optional[nn.Module] = None,
+    ):
+        """参数
+        ----
+        cfg            结构配置。
+        repr_provider  可选的「物品表示提供者」（M2.6b 内容融合用）。
+                       传入时，**输入嵌入与输出打分都改用它的输出**：
+                           table = repr_provider(item_emb.weight)   # [V, H]
+                       即物品表示 = f(可学的行为嵌入, 固定的内容向量)。
+                       provider 必须保证第 0 行（PAD）为零向量。
+                       为 None 时行为与不加融合**逐位一致**（回归保护）。
+        """
         super().__init__()
         self.cfg = cfg
         h = int(cfg.hidden_size)
+        self.repr_provider = repr_provider
 
         # ---------- 嵌入 ----------
         # padding_idx=0：该行初始化为全 0，且训练时不更新梯度。
@@ -266,20 +296,39 @@ class SASRec(nn.Module):
             self.item_emb.weight[PAD_ITEM].zero_()
 
     # ------------------------------------------------------------------
+    # 物品表示表（输入嵌入与输出打分共用同一条入口）
+    # ------------------------------------------------------------------
+    def item_table(self, weight: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """返回打分/嵌入用的物品表示表 `[V, H]`。
+
+        无 provider 时就是 `item_emb.weight`（权重绑定，与 M2.4 一致）；
+        有 provider 时（M2.6b 内容融合）是它作用后的表。**输入侧与输出侧
+        必须走同一个方法** —— 否则会出现"输入用融合表示、输出用纯嵌入"
+        的隐性不一致，指标看着还行但语义是错的。
+        """
+        if self.repr_provider is None:
+            return self.item_emb.weight if weight is None else weight
+        return self.repr_provider(self.item_emb.weight if weight is None else weight)
+
+    # ------------------------------------------------------------------
     # 前向
     # ------------------------------------------------------------------
     def encode(
         self,
         seq: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
+        item_table: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """把历史序列编码成逐位置隐状态与用户表示。
 
         参数
         ----
-        seq   `[B, L]` long，池内索引，PAD = 0（左填充）。
-        mask  `[B, L]` bool，True = 有效位置。None 时按 `seq != 0` 推导。
-              契约来自 `docs/project-structure.md` 的模型对外接口。
+        seq         `[B, L]` long，池内索引，PAD = 0（左填充）。
+        mask        `[B, L]` bool，True = 有效位置。None 时按 `seq != 0` 推导。
+                    契约来自 `docs/project-structure.md` 的模型对外接口。
+        item_table  可选的预算好的物品表示表。`score()` 会先算一次表再传进来，
+                    避免同一步里把 provider 重复算两遍（内容融合时表是
+                    (V, H+D) -> (V, H) 的一次矩阵乘，重复算不划算）。
 
         返回
         ----
@@ -303,7 +352,14 @@ class SASRec(nn.Module):
 
         # ---------- 嵌入 ----------
         positions = torch.arange(length, device=seq.device).unsqueeze(0)  # [1, L]
-        x = self.item_emb(seq) + self.pos_emb(positions)                  # [B, L, H]
+        table = self.item_table() if item_table is None else item_table
+        # ⚠️ 必须用 F.embedding(padding_idx=...) 而不是 table[seq]：
+        # nn.Embedding 的 padding_idx 语义**包含「第 0 行不接收梯度」**，
+        # 裸张量索引会把这个保障丢掉 —— PAD 行会随训练漂移出零，
+        # 于是「PAD 与真实物品」在嵌入空间里长出一个固定偏置方向。
+        # 回归测试 tests/test_sasrec/test_model.py::test_pad_row_receives_no_gradient
+        # 就是抓这个的（M2.6b 改造时被抓到过一次）。
+        x = F.embedding(seq, table, padding_idx=PAD_ITEM) + self.pos_emb(positions)
         if self.emb_scale != 1.0:
             x = x * self.emb_scale
         x = self.emb_norm(x)
@@ -354,8 +410,10 @@ class SASRec(nn.Module):
         M2.5 的多兴趣模型会把这里换成 K 个胶囊分别打分再合并，
         但**签名与候选列序保持不变** —— 这样评估器与所有实验脚本都不用改。
         """
-        _, user_repr = self.encode(input_ids)                 # [B, H]
-        emb_weight = self.item_emb.weight                     # [V, H]
+        # 表只算一次，输入与输出共用（内容融合时尤其重要：provider 是一次
+        # (V, H+D)->(V, H) 的矩阵乘，重复算会白白多花一份算力）
+        emb_weight = self.item_table()
+        _, user_repr = self.encode(input_ids, item_table=emb_weight)      # [B, H]
         if emb_weight.device != candidate_ids.device:
             # 候选索引在 CPU 上时（例如手写测试）不静默失败
             candidate_ids = candidate_ids.to(emb_weight.device)
