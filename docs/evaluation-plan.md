@@ -477,10 +477,21 @@ def set_seed(seed):
 
 | 类型 | 模型 | 实现位置 | 实现的公平性要求 |
 |---|---|---|---|
-| 传统协同过滤 | **ItemCF** | `models/baselines/itemcf.py` | 基于训练集共现矩阵，余弦相似度，TopK=200 邻居 |
+| 零信息对照 | **Popularity（热度）** | `models/baselines/popularity.py` | 只用**训练集**物品频次；完全忽略用户历史（E1 强制项，见 6.7） |
+| 传统协同过滤 | **ItemCF** | `models/baselines/itemcf.py` | 基于训练集**二值**共现矩阵，余弦相似度，TopK=200 邻居 |
 | 经典序列模型 | **GRU4Rec** | `models/baselines/gru4rec.py` | 隐藏层 64，1 层 GRU，与本文模型同嵌入维度 |
 | 基准序列模型 | **原版 SASRec** | `models/sasrec/model.py` | 2 层、2 头、hidden=64、dropout=0.2 |
 | 本文模型 | **多兴趣 + 内容融合 SASRec** | `models/multi_interest/` + `content_encoder/` | 在上者基础上加 K=4 胶囊 + 双路融合 |
+
+一键复现（三个基线共用主链路的抽样/负样本/评估器/早停）：
+
+```bash
+python scripts/run_baselines.py --baseline all --scale main       # 热度、ItemCF 秒级；GRU4Rec 要训练
+python scripts/run_baselines.py --baseline popularity --scale main --split test
+```
+
+实现细节与两处坑（`pack_padded_sequence` 不适用于左填充、ItemCF 全零行的并列假象）
+见 [`models/baselines/README.md`](../models/baselines/README.md)。
 
 ### 4.1 公平性控制（论文答辩必问）
 
@@ -859,6 +870,19 @@ M2.4 训出第一个模型时 `val ndcg@10 = 0.716`，好得可疑（公开数�
    该协议下绝对指标偏高，跨数据集比较需谨慎。
 3. **诊断可复现**：`python scripts/diagnose_popularity_bias.py --scale smoke --ckpt <路径>`
    → 结果落 `logs/popularity_bias_*.json`。
+
+**2026-09-14（M2.7）定量更新：连 ItemCF 也一起报。**
+`scripts/run_baselines.py` 跑出 main 档（10% 用户 / seed 42）的正式数字：
+
+| 打分器（main 档，test 集，n=129,382） | 训练成本 | 参数 | hr@5 | hr@10 | ndcg@10 | mrr |
+|---|---|---|---|---|---|---|
+| 仅按物品热度 | 0 | 0 | 0.7934 | 0.8996 | 0.6645 | 0.5956 |
+| **ItemCF**（共现+余弦，TopK 200） | 0 | 0 | 0.8930 | **0.9597** | **0.7514** | 0.6865 |
+| 正/负样本热度倍数 27.6×（正均值 17,381 / 负均值 629）、仅 5,176 个不同正样本 | | | | | | |
+
+⇒ **本文模型的增益必须相对 ItemCF 报告**，"相对随机 +5 倍"在本协议下没有信息量。
+同理，任何"我们的模型 ndcg@10 达到 0.7x"的表述都必须同时给出这两行，
+否则读者无法判断其中多少来自热度与共现先验。
 
 > ⚠️ **不要**为了让指标"更真实"而私自改负采样口径（例如改成热度分层负采样）——
 > 阶段一的负样本 `random-sample_size100-seed98765.pkl` 已经定稿，

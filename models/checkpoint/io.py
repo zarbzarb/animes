@@ -219,6 +219,16 @@ def load_model_from_checkpoint(
             model = _rebuild_content_fused(cfg_dict, fusion)
         # 局部导入：避免 checkpoint 子包在 import 时就依赖具体模型包，
         # 将来 baselines 的 checkpoint 复用本模块时不会被迫拉起全部模型。
+        elif cfg_dict.get("arch") == "gru4rec":
+            # M2.7 对比基线。识别靠 `arch` —— 缺了它 GRU4Rec 的权重会被
+            # 当成 SASRec 加载，然后爆一堆形状不匹配（能发现，但是无谓返工）。
+            from models.baselines.gru4rec import GRU4Rec, GRU4RecConfig
+
+            if "n_items" not in cfg_dict:
+                raise ValueError(
+                    "checkpoint 的 model_config 里没有 n_items，无法重建模型")
+            model = GRU4Rec(GRU4RecConfig.from_dict(
+                cfg_dict, n_items=int(cfg_dict["n_items"])))
         elif cfg_dict.get("arch") == "multi_interest":
             from models.multi_interest.config import MultiInterestConfig
             from models.multi_interest.model import MultiInterestSASRec

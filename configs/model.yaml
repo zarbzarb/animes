@@ -60,6 +60,26 @@ content_fusion:
   w_content_cold: 0.5
   cold_start_threshold: 10
 
+# ---------- 对比基线（M2.7）----------
+baselines:
+  # 三个基线的**评测**入口统一是 `python scripts/run_baselines.py`。
+  # 本段只放"结构超参"，不放评测口径（档位、负样本、早停一律复用主链路）。
+  popularity:
+    freq_source: train           # 只用训练集频次（不是 item_stats 的全量 n_positive）
+                                 # ⚠️ 全量口径会混进 val/test 交互，而且让基线**更好看**，
+                                 #    正好是最不容易被察觉的方向；诊断脚本另有全量口径的用途
+  itemcf:
+    topk_sim: 200                # 论文口径（docs/evaluation-plan.md §4）
+    similarity: cosine_on_binary_cooccurrence
+                                 # 二值化（用户内取重）+ 余弦归一，与 RecBole ItemKNN 一致
+    tiebreak: null               # 纯 ItemCF。全零候选行的占比由脚本强制上报 ——
+                                 # 那些行按本项目并列口径会**白拿 HR=1**，是必须披露的假象
+  gru4rec:
+    hidden_size: 64              # 与本文模型同嵌入维度（公平性要求）
+    num_layers: 1                # ⚠️ 覆盖 model 段的 2：GRU4Rec 的论文口径是 1 层
+    dropout: 0.2                 # 与本文模型一致
+    share_item_emb: true         # 输出层复用输入嵌入（RecBole full_sort_predict 口径）
+
 train:
   batch_size: 1024              # M2.0 实测甜点；显存占用仅 1.19 GB / 6 GB。
                                 # 吞吐最优其实是 2048（再高 10%），但 batch 越大

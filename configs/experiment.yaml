@@ -49,6 +49,11 @@ E1_overall:
     # 不报这一行，等于把"热度先验"的功劳算给了序列建模。
     # 证据与复现：scripts/diagnose_popularity_bias.py
     # 实现：M2.7（与 itemcf/gru4rec 一起做，无需训练，秒级出结果）
+    # ⚠️ 2026-09-14 M2.7 实测（main 档 / seed 42 / test 集 / n=129,382）：
+    #      popularity  hr@10 0.8996  ndcg@10 0.6645
+    #      itemcf      hr@10 0.9597  ndcg@10 0.7514   ← 零训练零参数！
+    #    即 ItemCF 比"仅热度"又高 6pp，本文模型的增益必须相对 **ItemCF** 报告。
+    #    两行都必须出现在 E1 主表里（`python scripts/run_baselines.py --baseline all --scale main`）。
     - { name: popularity, impl: models/baselines/popularity.py, params: { freq_from: train } }
     - { name: itemcf,  impl: models/baselines/itemcf.py,  params: { topk_sim: 200 } }
     - { name: gru4rec, impl: models/baselines/gru4rec.py, params: { hidden_size: 64, num_layers: 1 } }

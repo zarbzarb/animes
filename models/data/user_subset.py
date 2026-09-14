@@ -190,6 +190,68 @@ def is_nested(masks) -> bool:
     return True
 
 
+# =====================================================================
+# 档位 -> 「哪些用户训练、哪些用户评估」
+# =====================================================================
+def rows_from_order(order: np.ndarray, ratio: float) -> np.ndarray:
+    """从已有全序取前 `ratio` 比例的位置，返回**升序**行号。
+
+    为什么返回升序而不是保持全序：下游（负采样、评估输入构造、滑窗数据集）
+    都按行号顺序遍历，升序能让索引缓存友好、且让"评估子集"在日志里可读。
+    注意升序**不会**破坏嵌套性 —— 嵌套是"哪些用户入选"的性质，
+    与输出顺序无关。
+
+    全序上的前缀而不是另抽一次，是本项目「嵌套抽样」这条不变式的唯一实现
+    （见 `configs/scale.yaml` 的 invariants）。
+    """
+    n = int(len(order))
+    n_keep = _resolve_keep_count(n, float(ratio))
+    if n_keep <= 0:
+        return np.zeros(0, dtype=np.int64)
+    if n_keep >= n:
+        return np.arange(n, dtype=np.int64)
+    return np.sort(np.asarray(order[:n_keep], dtype=np.int64))
+
+
+def resolve_scale_users(
+    user_ids,
+    user_ratio: float,
+    eval_user_ratio: float,
+    seed: int = 42,
+) -> tuple:
+    """档位制下「训练用户行号 / 评估用户行号」的**唯一实现**。
+
+    返回 `(train_rows, eval_rows)`，两者都是**升序**行号数组。
+
+    两条口径（与 `configs/scale.yaml` 的三条不变式一致，勿改）
+    -------------------------------------------------------
+    1. **只抽用户，不抽物品** —— 物品池恒为全量。
+    2. **确定性嵌套** —— 各档位都基于同一个 `subset_order(uids, seed)`
+       的前缀，故 5% ⊂ 10% ⊂ 100%。
+    3. **评估用户从本档位用户中抽，比例相对本档位** ——
+       `|eval_rows| = |train_rows| × eval_user_ratio`（**不是**相对全量用户池）。
+       同档位内固定不变，因此跨 epoch 的指标可比、best model 不会被选错。
+
+    为什么必须抽成公共函数：这段逻辑原先在 `scripts/train.py` 里，
+    `scripts/diagnose_popularity_bias.py` 又抄了一份；M2.7 的基线脚本是
+    第三个调用方。三份拷贝意味着"某天有人只改了其中一处"——
+    而这类不一致**不会报错**，只会让两个脚本报出不可比的指标。
+    """
+    ids = np.asarray(user_ids)
+    n = int(ids.size)
+    order = subset_order(ids, seed)
+    train_rows = rows_from_order(order, float(user_ratio))
+
+    # 评估用户 = 本档位用户的子集。注意要的是"同一把哈希尺子的前缀"，
+    # 所以从 order 里取，而不是从已升序的 train_rows 里取。
+    n_eval_cap = max(1, int(round(train_rows.size * float(eval_user_ratio))))
+    in_train = np.zeros(n, dtype=bool)
+    in_train[train_rows] = True
+    eval_rows = np.sort(
+        np.asarray(order[in_train[order]][:n_eval_cap], dtype=np.int64))
+    return train_rows, eval_rows
+
+
 __all__ = [
     "user_hash_keys",
     "subset_order",
@@ -197,4 +259,6 @@ __all__ = [
     "nested_user_subset",
     "kept_user_ids",
     "is_nested",
+    "rows_from_order",
+    "resolve_scale_users",
 ]

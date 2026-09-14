@@ -159,16 +159,17 @@ models/
 │   ├── model.py               #   候选侧（结构级）融合：内容向量作输入特征（M2.6b）
 │   ├── pretrained/            #   本地 DistilBERT 权重（517MB，不入库）
 │   └── README.md
-├── baselines/                 # 对比基线（保证公平复现）
-│   ├── itemcf.py              #   ItemCF 协同过滤
-│   ├── gru4rec.py             #   GRU4Rec
+├── baselines/                 # 对比基线（保证公平复现，✅ M2.7）
+│   ├── popularity.py          #   热度（零信息、零参数）
+│   ├── itemcf.py              #   ItemCF 协同过滤（二值共现 + 余弦 + 逐行 TopK）
+│   ├── gru4rec.py             #   GRU4Rec（H=64、1 层；走 fit() 共用早停）
 │   └── README.md
 ├── eval/                      # 指标与评估循环的唯一来源
 │   ├── metrics.py             #   HR@K / NDCG@K / Recall@K / MRR（✅ M2.1）
 │   ├── evaluator.py           #   分批前向 + 剔除泄漏 + metrics.json（✅ M2.2）
 │   └── README.md
 ├── data/                      # 数据侧纯函数子包（无 IO）
-│   ├── user_subset.py         #   确定性嵌套用户抽样（训练档位的实现基础）
+│   ├── user_subset.py         #   确定性嵌套抽样 + 档位→训练/评估行号（✅ M2.7 抽出公共实现）
 │   └── negatives.py           #   负采样唯一实现（评估公平性的实现基础，✅ M2.2）
 ├── sasrec/dataset.py          #   滑动窗口 Dataset + 评估输入构造（✅ M2.3）
 └── checkpoint/                # 模型保存/加载工具（state_dict 规范）
