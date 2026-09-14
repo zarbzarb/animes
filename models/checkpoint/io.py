@@ -127,6 +127,56 @@ def load_state_into(model: nn.Module, payload: dict, strict: bool = True) -> nn.
     return model
 
 
+def _project_root() -> str:
+    """项目根目录（`F:\\pj`）：配置与产物路径一律相对它锚定。"""
+    return os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+
+
+def _rebuild_content_fused(cfg_dict: dict, fusion: dict) -> nn.Module:
+    """按 `meta["content_fusion"]` 重建带候选侧内容融合的模型（M2.6b）。
+
+    为什么必须走 `build_model` 工厂：训练与重建若各写一套装配逻辑，
+    迟早出现「训练用 concat、加载建成 add」——权重形状一致、加载不报错，
+    但语义变了，指标对不上时极难排查。
+    """
+    from models.content_encoder.model import (
+        build_model,
+        load_content_matrix_for_fusion,
+    )
+
+    rel = fusion.get("file")
+    if not rel:
+        raise ValueError(
+            "checkpoint 声明了 content_fusion 但 meta 里没有 file 字段，"
+            "无法定位内容矩阵")
+    root = _project_root()
+    path_abs = rel if os.path.isabs(rel) else os.path.join(root, rel)
+    if not os.path.exists(path_abs):
+        raise FileNotFoundError(
+            f"checkpoint 需要内容矩阵 {path_abs}，但文件不存在；"
+            "请先跑 scripts/build_content_vectors.py 或修正 meta")
+
+    n_items = cfg_dict.get("n_items")
+    if n_items is None:
+        raise ValueError("checkpoint 的 model_config 里没有 n_items，无法重建模型")
+    n_items = int(n_items)
+    matrix = load_content_matrix_for_fusion(path_abs, n_items)
+    mode = str(fusion.get("mode") or "concat")
+
+    if cfg_dict.get("arch") == "multi_interest":
+        from models.multi_interest.config import MultiInterestConfig
+        mi_cfg = MultiInterestConfig.from_dict(cfg_dict, n_items=n_items)
+        return build_model("multi_interest", None, n_items,
+                           content_matrix=matrix, content_mode=mode,
+                           mi_cfg=mi_cfg)
+
+    from models.sasrec.config import SASRecConfig
+    return build_model(
+        "sasrec", SASRecConfig.from_dict(cfg_dict, n_items=n_items), n_items,
+        content_matrix=matrix, content_mode=mode)
+
+
 def load_model_from_checkpoint(
     path: str,
     model: Optional[nn.Module] = None,
@@ -160,9 +210,14 @@ def load_model_from_checkpoint(
                 "checkpoint 的 meta 里没有 model_config，无法自动重建模型；"
                 "请显式传入已构造的 model")
 
+        # ---------- 候选侧内容融合（M2.6b）----------
+        # meta["content_fusion"] 为 None / 缺失 = 无融合（M2.4 基线口径）。
+        fusion = meta.get("content_fusion")
+        if fusion:
+            model = _rebuild_content_fused(cfg_dict, fusion)
         # 局部导入：避免 checkpoint 子包在 import 时就依赖具体模型包，
         # 将来 baselines 的 checkpoint 复用本模块时不会被迫拉起全部模型。
-        if cfg_dict.get("arch") == "multi_interest":
+        elif cfg_dict.get("arch") == "multi_interest":
             from models.multi_interest.config import MultiInterestConfig
             from models.multi_interest.model import MultiInterestSASRec
 

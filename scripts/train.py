@@ -67,6 +67,10 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from models.checkpoint.io import checkpoint_name, save_checkpoint  # noqa: E402
+from models.content_encoder.model import (  # noqa: E402
+    build_model,
+    load_content_matrix_for_fusion,
+)
 from models.data.negatives import DEFAULT_NEG_SEED  # noqa: E402
 from models.data.user_subset import subset_order  # noqa: E402
 from models.eval.evaluator import build_eval_data, drop_leaked_samples, evaluate  # noqa: E402
@@ -182,6 +186,15 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--model", default=None, choices=["sasrec", "multi_interest"],
                     help="模型结构：sasrec（M2.4 基座）/ multi_interest（M2.5 多兴趣）。"
                          "默认取配置里的 arch 字段，再默认 sasrec")
+    ap.add_argument("--content-fusion", dest="content_fusion",
+                    action="store_true", default=None,
+                    help="启用候选侧内容融合（M2.6b）：内容向量拼进物品表示、"
+                         "端到端训练。默认取配置 content_fusion.candidate_side")
+    ap.add_argument("--no-content-fusion", dest="content_fusion",
+                    action="store_false",
+                    help="显式关闭候选侧内容融合（覆盖配置）")
+    ap.add_argument("--content-mode", default=None, choices=["concat", "add"],
+                    help="候选侧融合方式：concat（拼接后降维，默认）/ add（相加）")
     ap.add_argument("--seed", type=int, default=None,
                     help="只跑这一个种子；默认跑档位定义的全部种子")
     ap.add_argument("--epochs", type=int, default=None, help="覆盖档位的 max_epochs")
@@ -313,6 +326,27 @@ def main(argv=None) -> int:
                     model_cfg.hidden_size, model_cfg.num_layers,
                     model_cfg.num_heads, model_cfg.dropout, model_cfg.input_cap)
 
+    # ---------- 候选侧内容融合（M2.6b）----------
+    # 三层优先级：命令行 > 配置 content_fusion.candidate_side > 默认关。
+    # 关闭时 content_matrix=None，模型装配路径与 M2.4 完全一致（可比性）。
+    fusion_yaml = dict(model_yaml.get("content_fusion") or {})
+    use_content = (bool(args.content_fusion) if args.content_fusion is not None
+                   else bool(fusion_yaml.get("candidate_side", False)))
+    content_mode = str(args.content_mode or fusion_yaml.get("mode") or "concat")
+    content_matrix = None
+    content_file = None
+    if use_content:
+        content_file = to_abs(fusion_yaml.get("content_file")
+                              or os.path.join("data", "features",
+                                              "content_vec_512.npy"))
+        if not os.path.exists(content_file):
+            raise SystemExit(
+                f"启用内容融合但缺少内容向量：{content_file}\n"
+                "请先跑 `python scripts/build_content_vectors.py`。")
+        content_matrix = load_content_matrix_for_fusion(content_file, n_items)
+        logger.info("候选侧内容融合已启用：%s（%s）",
+                    os.path.relpath(content_file, ROOT), content_mode)
+
     # ---------- 验证集（只构建一次，跨 epoch 复用 —— 硬约束）----------
     t0 = time.time()
     val_items = np.array([int(val_seqs[int(r)][0]) for r in eval_rows], dtype=np.int64)
@@ -356,6 +390,8 @@ def main(argv=None) -> int:
             eval_data=eval_data, ks=ks, device=device, n_items=n_items,
             n_leaked=n_leaked, ckpt_dir=ckpt_dir, log_dir=log_dir,
             arch=arch, mi_cfg=mi_cfg,
+            content_matrix=content_matrix, content_mode=content_mode,
+            content_file=content_file,
         )
         reports.append(report)
 
@@ -371,6 +407,8 @@ def run_one_seed(
     eval_data, ks, device, n_items: int, n_leaked: int,
     ckpt_dir: str, log_dir: str,
     arch: str = "sasrec", mi_cfg: MultiInterestConfig = None,
+    content_matrix=None, content_mode: str = "concat",
+    content_file: str = None,
 ) -> dict:
     """跑一个种子：建模型 → 训练 → 存最优权重 → 记录报告。"""
     set_seed(seed)
@@ -446,10 +484,18 @@ def run_one_seed(
         return res
 
     # ---------- 模型 ----------
-    if arch == "multi_interest":
-        model = MultiInterestSASRec(mi_cfg).to(device)
-    else:
-        model = SASRec(model_cfg).to(device)
+    # 统一走 models/content_encoder/model.py 的工厂：训练与 checkpoint 重建
+    # 必须共用同一条装配路径（否则「训练用 concat、加载建成 add」会静默发生）
+    model = build_model(
+        arch, model_cfg, n_items, content_matrix=content_matrix,
+        content_mode=content_mode, mi_cfg=mi_cfg).to(device)
+    if content_matrix is not None:
+        logger.info(
+            "内容融合：候选侧 %s（内容 %d 维 → hidden %d），投影层参数 +%s，"
+            "内容矩阵 %d 维固定特征（不可学）",
+            content_mode, int(content_matrix.shape[1]), int(model_cfg.hidden_size),
+            f"{model.repr_provider.n_params:,}",
+            int(content_matrix.shape[1]))
     logger.info("参数量 %s（arch=%s）；训练配置 batch=%d lr=%g amp=%s "
                 "workers=%d epochs=%d",
                 f"{model.n_params:,}", arch, train_cfg.batch_size, oc.lr,
@@ -488,6 +534,11 @@ def run_one_seed(
     report = {
         "experiment_name": exp_name,
         "arch": arch,
+        "content_fusion": (None if content_matrix is None else {
+            **model.repr_provider.config_snapshot(),
+            "file": os.path.relpath(content_file, ROOT),
+            "n_params_total": int(model.n_params),
+        }),
         "scale": scale_name,
         "seed": int(seed),
         "device": str(device),
@@ -518,6 +569,13 @@ def run_one_seed(
         exp_tag = f"{exp_name}{('_' + args.tag) if args.tag else ''}"
         path = os.path.join(
             ckpt_dir, checkpoint_name(exp_tag, scale_name, seed, suffix="best"))
+        # 内容融合的信息必须进 meta：`load_model_from_checkpoint` 靠它
+        # 决定"要不要装 provider、装哪种 mode、读哪个文件"，否则重建出来的
+        # 模型能加载权重却语义不同（形状一样，静默出错）。
+        fusion_meta = None
+        if content_matrix is not None:
+            fusion_meta = dict(model.repr_provider.config_snapshot())
+            fusion_meta["file"] = os.path.relpath(content_file, ROOT)
         save_checkpoint(path, model, meta={
             "experiment_name": exp_tag,
             "arch": arch,
@@ -528,6 +586,7 @@ def run_one_seed(
                         else (result.records[-1].metrics if result.records else {})),
             "best_metric_name": result.metric_name,
             "best_metric": result.best_metric,
+            "content_fusion": fusion_meta,     # None = 无融合（M2.4 基线口径）
             "model_config": model.config_snapshot(),
         })
         report["checkpoint"] = os.path.relpath(path, ROOT)
