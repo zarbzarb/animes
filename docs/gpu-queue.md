@@ -61,13 +61,16 @@ $PY scripts/eval_content_fusion.py --ckpt data/checkpoints/<content_best.pt> --z
 
 → 数字写入 `logs/content_fusion_eval.json`，并在 `progress.md` §4.1 补一行对照。
 
-### 2.3 ☐ M2.7 收尾：GRU4Rec 的 dev / main（≈ 6.4 h）
+### 2.3 🔵 M2.7 收尾：GRU4Rec 的 dev / main（≈ 6.4 h）
 
 ```bash
-$PY scripts/run_baselines.py --baseline gru4rec --scale dev  --split val      # 0.9 h，方向确认
-$PY scripts/run_baselines.py --baseline gru4rec --scale main --split val  --seed 42
+$PY scripts/run_baselines.py --baseline gru4rec --scale dev  --split val      # 0.9 h，方向确认  ✅ 2026-09-15
+$PY scripts/run_baselines.py --baseline gru4rec --scale main --split val  --seed 42   # 🔵 进行中（2n930k，≈2 h）
 $PY scripts/run_baselines.py --baseline gru4rec --scale main --split test --seed 42   # ×3 种子
 ```
+
+> ✅ dev 档已完成：val hr@10 0.9639 / ndcg@10 0.7935（seed 42，30ep，1731s），
+> `logs/baseline_gru4rec_dev_val_seed42.json`。低于 SASRec base（0.79854）、高于多兴趣两组。
 
 > ⚠️ E1 主表要求 3 个神经模型 × 3 种子。种子 42 已有阈值参照，2024 / 2025 需补。
 
