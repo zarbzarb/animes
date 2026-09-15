@@ -65,12 +65,15 @@ $PY scripts/eval_content_fusion.py --ckpt data/checkpoints/<content_best.pt> --z
 
 ```bash
 $PY scripts/run_baselines.py --baseline gru4rec --scale dev  --split val      # 0.9 h，方向确认  ✅ 2026-09-15
-$PY scripts/run_baselines.py --baseline gru4rec --scale main --split val  --seed 42   # 🔵 进行中（2n930k，≈2 h）
-$PY scripts/run_baselines.py --baseline gru4rec --scale main --split test --seed 42   # ×3 种子
+$PY scripts/run_baselines.py --baseline gru4rec --scale main --split val  --seed 42   # ✅ 2026-09-15（2838s）
+$PY scripts/run_baselines.py --baseline gru4rec --scale main --split test --seed 42   # 🔵 进行中（ZIuhXs）→ ×3 种子
 ```
 
 > ✅ dev 档已完成：val hr@10 0.9639 / ndcg@10 0.7935（seed 42，30ep，1731s），
 > `logs/baseline_gru4rec_dev_val_seed42.json`。低于 SASRec base（0.79854）、高于多兴趣两组。
+>
+> ✅ main/val 已完成：hr@10 **0.9658** / ndcg@10 **0.7966** / mrr 0.7436（seed 42，最优 ep15，25ep 早停，
+> `logs/baseline_gru4rec_main_val_seed42.json`）。main 实测 2,838 s ≈ 0.79 h（与 20.7 ms/step × 10,671 step 口径吻合）。
 
 > ⚠️ E1 主表要求 3 个神经模型 × 3 种子。种子 42 已有阈值参照，2024 / 2025 需补。
 

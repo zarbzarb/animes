@@ -221,11 +221,11 @@ Windows 因哈希不符拒绝加载 → 设备 Code 52 → CUDA 报告无设备�
 | **M2.5** ✅ | 多兴趣胶囊 | K=4 动态路由（3 次迭代）接在 SASRec 输出后；记录胶囊两两余弦相似度检测塌缩 | `models/multi_interest/{config,capsule,model}.py` | ✅ **已完成**：全仓 318 例全绿（新增 42）；debug 档 8 epoch 固定预算 val ndcg@10 **0.7624**（基线同预算 0.7871，路由未收敛属预期）；相似度 0.699（阈值 <0.7 边缘达标，无死胶囊）；新增参数恰好 +16,384（=路由 W）。⚠️ 发现并修复 **squash 与 0.02² 初始化的量级冲突**（见 §4.1 M2.5） |
 | **M2.6** ✅ | 内容融合（排序侧） | 排序侧 7:3 加权 + 冷启动 5:5 自动切权 | `models/content_encoder/fusion.py`、`scripts/eval_content_fusion.py` | ✅ `fusion_score()` 契约达成；实测**后验融合无增益**（见 §4.1 M2.6），E2 按此口径如实报告 |
 | **M2.6b** ✅ | 内容融合（候选侧） | 内容向量拼进物品表示、端到端训练；`concat` 与零初始化残差 `add` 两臂 | `models/content_encoder/model.py`、`models/sasrec/model.py` 的 `repr_provider` | ✅ 实现 + 39 例单测（全仓 375 例全绿）；`add` 臂 **0.7895 > 基线 0.7871**（单种子 8 epoch）；**默认口径锁定 `add`**（决策 D5，dev 档 30 epoch 复核中）；concat 无稳定增益（见 §4.1 M2.6b） |
-| **M2.7** 🔵 | 对比基线 | ItemCF（共现 + 余弦，TopK 200 邻居）、GRU4Rec（隐藏 64，1 层）、热度 | `models/baselines/`、`scripts/run_baselines.py` | 🔵 **实现完成 + 热度/ItemCF 已出正式数字**（main/test：热度 0.8996/0.6645、ItemCF **0.9597/0.7514**，零训练零参数）；GRU4Rec 走 `fit()` 同早停，smoke 已跑通，dev/main 待 GPU（见 §4.1 M2.7） |
+| **M2.7** 🔵 | 对比基线 | ItemCF（共现 + 余弦，TopK 200 邻居）、GRU4Rec（隐藏 64，1 层）、热度 | `models/baselines/`、`scripts/run_baselines.py` | 🔵 **实现完成 + 热度/ItemCF 已出正式数字**（main/test：热度 0.8996/0.6645、ItemCF **0.9597/0.7514**，零训练零参数）；GRU4Rec smoke/dev/main(val) 已出数（main/val 0.9658/0.7966），main/test 进行中（见 §4.1 M2.7） |
 | **M2.8** | 实验编排 | `run_experiments.py` 按 `configs/experiment.yaml` 串起 E1~E4，落盘 `experiments/{id}/`，回写 `result-analysis.md` | `scripts/run_experiments.py`、`scripts/plot_results.py` | 一次命令跑完四组；输出目录结构与 `evaluation-plan.md` 8.2 一致 |
 | **M2.9** | 填表与作图 | 真实指标填入 `result-analysis.md` / `ablation-study.md`，生成 4 张图 | 指标表 + `figures/*.png` | **每个数字都有出处（实验目录名）**，无出处不许填 |
 
-推荐执行顺序即上表自上而下。**M2.0–M2.6b 已完成；M2.7 实现完成、热度与 ItemCF 已出数字，GRU4Rec 待 GPU**（排在 M2.6b 的 dev 档复核之后）；环境已无阻塞。
+推荐执行顺序即上表自上而下。**M2.0–M2.6b 已完成；M2.7 实现完成、热度与 ItemCF 已出数字，GRU4Rec 已出 dev + main(val)，main/test 进行中**；环境已无阻塞。
 
 ### 4.1 已完成里程碑记录
 
@@ -514,7 +514,7 @@ concat +0.0531、SASRec+add +0.0350、多兴趣+add +0.0451 —— 三者都显�
 |---|---|---|---|
 | `popularity.py` 热度（零信息） | 否 | 0 | ✅ 三档全跑（smoke/dev/main） |
 | `itemcf.py` 协同过滤（共现+余弦，TopK 200） | 否 | 0 | ✅ 三档全跑，val+test |
-| `gru4rec.py` 经典序列模型（H=64，1 层 GRU） | **是** | 1,033,088 | 🔵 smoke 档已跑通；dev/main 待 GPU（排在 M2.6b dev 复核之后） |
+| `gru4rec.py` 经典序列模型（H=64，1 层 GRU） | **是** | 1,033,088 | 🔵 smoke/dev 已跑通；**main/val 已出正式数字**（0.9658/0.7966）；main/test 进行中 |
 
 公平性控制全部落在**复用唯一实现**上，没有一处重写：
 
@@ -552,12 +552,13 @@ concat +0.0531、SASRec+add +0.0350、多兴趣+add +0.0451 —— 三者都显�
 | itemcf | **test** | 129,382 | 0.8930 | **0.9597** | 0.7295 | **0.7514** | 0.6865 |
 | gru4rec | val(smoke, 3ep) | 647 | 0.8497 | 0.8733 | 0.5906 | 0.6179 | 0.5439 |
 | **gru4rec** | **val(dev, 30ep)** | 12,913 | **0.9639** | **0.9639** | **0.8284** | **0.7935** | **0.7402** |
+| **gru4rec** | **val(main, 25ep)** | 129,137 | **0.9141** | **0.9658** | **0.7797** | **0.7966** | **0.7436** |
 
-**GRU4Rec dev 档正式数字（2026-09-15，seed 42，1,033,088 参数，30 epoch 早停 patience=10）**：
-val 集 hr@10 **0.9639** / ndcg@10 **0.7935** / mrr 0.7402。横向对照 dev/val：SASRec base 0.79854 >
-GRU4Rec 0.7935 > 多兴趣+add 0.79243 > 多兴趣 base 0.78492 —— 经典 GRU（20.7 ms/step，约为 SASRec
+**GRU4Rec main 档 val 正式数字（2026-09-15，seed 42，1,033,088 参数，25 epoch 早停 patience=10，最优 epoch 15）**：
+hr@10 **0.9658** / ndcg@10 **0.7966** / mrr **0.7436**（hr@5 0.9141 / ndcg@5 0.7797），n=129,137，训练 2,838 s（AMP）。
+横向对照 dev/val：SASRec base 0.79854 > GRU4Rec 0.7935 > 多兴趣+add 0.79243 > 多兴趣 base 0.78492 —— 经典 GRU（20.7 ms/step，约为 SASRec
 的 0.7 倍）在这个协议下已经能逼近 SASRec，E1 主表值得期待。dev 评估剔除答案泄漏 154 条（1.179%）。
-main 档（val seed42 起，test ×3 种子续后）进行中。
+main 档 val 已出；**test（seed42 起跑中，×3 种子续后）**。
 
 **⚠️ 必须写进论文「局限性」的一条硬事实：本协议下 ItemCF 极强。**
 一个**零训练、零参数**的共现模型在 test 集拿到 **hr@10 = 0.9597 /
