@@ -24,6 +24,8 @@
       <el-table-column label="番剧" min-width="220" show-overflow-tooltip>
         <template #default="{ row }">
           {{ row.anime?.title || row.title }}
+          <el-button text type="primary" size="small" class="brief-btn"
+            @click="showDetail(row)">简介</el-button>
         </template>
       </el-table-column>
       <el-table-column prop="status_label" label="状态" width="90">
@@ -62,6 +64,8 @@
         <el-button type="primary" :disabled="!picked" @click="add">加入追番</el-button>
       </template>
     </el-dialog>
+
+    <AnimeDetailDialog v-model="detailOpen" :anime-id="detailId" />
   </div>
 </template>
 
@@ -71,10 +75,18 @@ import { Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import CoverImage from '../components/CoverImage.vue'
+import AnimeDetailDialog from '../components/AnimeDetailDialog.vue'
 
 const rows = ref([]); const total = ref(0); const page = ref(1); const size = 20
 const status = ref(null); const busy = ref(false); const stats = ref({})
 const adding = ref(false); const picked = ref(null); const candidates = ref([]); const searching = ref(false)
+const detailOpen = ref(false); const detailId = ref(null)
+
+/* 记录行上的 anime_id 即 src_anime_id（与 /records POST 同口径） */
+const showDetail = (row) => {
+  detailId.value = row.anime?.src_anime_id ?? row.anime?.id ?? row.anime_id
+  detailOpen.value = true
+}
 
 async function load () {
   busy.value = true
@@ -121,4 +133,5 @@ onMounted(load)
 .sel { width: 140px; }
 .pager { margin-top: 14px; justify-content: flex-end; }
 .w100 { width: 100%; }
+.brief-btn { padding: 0; margin-left: 8px; }
 </style>

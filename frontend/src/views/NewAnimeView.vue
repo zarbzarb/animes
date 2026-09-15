@@ -6,8 +6,9 @@
     </div>
     <el-empty v-if="!busy && !items.length" description="该季度暂无新番推荐" />
     <template v-for="it in items" :key="`${it.anime_id}-${it.rank_no}`">
-      <AnimeCard :it="it" @track="onTrack" />
+      <AnimeCard :it="it" @track="onTrack" @detail="showDetail" />
     </template>
+    <AnimeDetailDialog v-model="detailOpen" :anime-id="detailId" />
   </div>
 </template>
 
@@ -16,8 +17,11 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import AnimeCard from '../components/AnimeCard.vue'
+import AnimeDetailDialog from '../components/AnimeDetailDialog.vue'
 
 const items = ref([]); const busy = ref(false); const season = ref('')
+const detailOpen = ref(false); const detailId = ref(null)
+const showDetail = (id) => { detailId.value = id; detailOpen.value = true }
 
 async function load () {
   busy.value = true

@@ -25,6 +25,7 @@
     <div v-if="reason" class="why">💡 {{ reason }}<span v-if="it.interest_label" class="dim">（兴趣 {{ it.interest_label }}）</span></div>
 
     <div class="ops">
+      <el-button size="small" type="primary" text @click="$emit('detail', animeId)">简介</el-button>
       <el-button size="small" @click="$emit('similar', animeId)">相似推荐</el-button>
       <el-button size="small" type="primary" plain @click="$emit('track', { anime_id: animeId, title })">加入追番</el-button>
     </div>
@@ -43,7 +44,7 @@ import CoverImage from './CoverImage.vue'
  * - 宽松备选：{rank_no, anime_id, title, ..., reason}
  */
 const props = defineProps({ it: { type: Object, required: true } })
-defineEmits(['track', 'similar'])
+defineEmits(['track', 'similar', 'detail'])
 
 const a = computed(() => props.it.anime || {})
 const rank = computed(() => props.it.rank ?? props.it.rank_no ?? '—')

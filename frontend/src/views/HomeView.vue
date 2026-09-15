@@ -17,8 +17,9 @@
 
     <el-empty v-if="!busy && !items.length" description="暂无推荐，先去加几条追番记录吧" />
     <template v-for="it in items" :key="`${it.anime_id}-${it.rank_no}`">
-      <AnimeCard :it="it" @track="onTrack" @detail="goDetail" @similar="goSimilar" />
+      <AnimeCard :it="it" @track="onTrack" @detail="showDetail" @similar="goSimilar" />
     </template>
+    <AnimeDetailDialog v-model="detailOpen" :anime-id="detailId" />
   </div>
 </template>
 
@@ -29,6 +30,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import AnimeCard from '../components/AnimeCard.vue'
+import AnimeDetailDialog from '../components/AnimeDetailDialog.vue'
 
 const router = useRouter()
 const busy = ref(false)
@@ -65,7 +67,9 @@ async function onTrack (it) {
   ElMessage.success(`已加入追番：${it.title}`)
 }
 
-const goDetail = (id) => router.push({ name: 'interest', query: { anime_id: id } })
+const detailOpen = ref(false)
+const detailId = ref(null)
+const showDetail = (id) => { detailId.value = id; detailOpen.value = true }
 const goSimilar = (id) => router.push({ name: 'new', query: { similar_to: id } })
 
 onMounted(async () => {

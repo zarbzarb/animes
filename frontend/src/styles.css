@@ -1,6 +1,25 @@
 :root {
-  --brand: #e8749c;
-  --brand-dark: #d15c86;
+  /* 品牌色：B 站粉 */
+  --brand: #fb7299;
+  --brand-dark: #e45c82;
+  /* 链接/信息蓝：B 站蓝，只做点缀 */
+  --info-blue: #00a1d6;
+  --text-1: #18191c;
+  --text-2: #61666d;
+  --text-3: #9499a0;
+  --bg-page: #f6f7f8;
+  --line: #e3e5e7;
+
+  /* 统一 Element Plus 主色为品牌粉（全站按钮/选中态/单选自动跟随） */
+  --el-color-primary: #fb7299;
+  --el-color-primary-light-3: #fd8fae;
+  --el-color-primary-light-5: #fdaec5;
+  --el-color-primary-light-7: #feccd6;
+  --el-color-primary-light-8: #fedde4;
+  --el-color-primary-light-9: #fff1f5;
+  --el-color-primary-dark-2: #e45c82;
+  /* 成功色收敛为柔和绿，避免刺眼的大绿按钮 */
+  --el-color-success: #2ac864;
 }
 
 * { box-sizing: border-box; }
@@ -8,14 +27,15 @@
 body {
   margin: 0;
   font-family: 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background: #f5f6fa;
+  background: var(--bg-page);
+  color: var(--text-1);
 }
 
 .page-title {
   font-size: 20px;
   font-weight: 600;
   margin: 0 0 16px;
-  color: #303133;
+  color: var(--text-1);
 }
 
 .score-bar {
@@ -23,13 +43,13 @@ body {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-3);
 }
 .score-bar .track {
   flex: 1;
   height: 6px;
   border-radius: 3px;
-  background: #ebeef5;
+  background: #f1f2f3;
   overflow: hidden;
 }
 .score-bar .fill {
@@ -37,5 +57,5 @@ body {
   border-radius: 3px;
 }
 .score-bar.final .fill { background: var(--brand); }
-.score-bar.behavior .fill { background: #6b9fe8; }
-.score-bar.content .fill { background: #67c23a; }
+.score-bar.behavior .fill { background: var(--info-blue); }
+.score-bar.content .fill { background: var(--el-color-success); }

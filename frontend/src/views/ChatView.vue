@@ -10,7 +10,7 @@
             </template>
             <div v-else class="cards">
               <div v-for="c in seg.v" :key="c.anime_id" class="mini-card"
-                   @click="$router.push('/new')">
+                   @click="showDetail(c.anime_id)">
                 <b>{{ c.title }}</b>
                 <span class="dim">{{ c.year || '' }} {{ c.score != null ? '★' + c.score : '' }}</span>
               </div>
@@ -25,15 +25,19 @@
         :disabled="streaming" @keyup.enter="send" />
       <el-button type="primary" size="large" :loading="streaming" @click="send">发送</el-button>
     </div>
+    <AnimeDetailDialog v-model="detailOpen" :anime-id="detailId" />
   </div>
 </template>
 
 <script setup>
 import { nextTick, onMounted, ref } from 'vue'
 import { auth } from '../stores/auth'
+import AnimeDetailDialog from '../components/AnimeDetailDialog.vue'
 
 const msgs = ref([{ role: 'assistant', segs: [{ t: 'text', v: '你好！我是追番助手，可以直接告诉我你的口味～' }] }])
 const text = ref(''); const streaming = ref(false); const boxEl = ref(null)
+const detailOpen = ref(false); const detailId = ref(null)
+const showDetail = (id) => { detailId.value = id; detailOpen.value = true }
 let sessionId = ''
 
 function push (role, segs) { msgs.value.push({ role, segs }); scroll() }

@@ -1,7 +1,15 @@
 <template>
   <el-container class="layout">
     <el-aside width="200px" class="aside">
-      <div class="logo">🌸 AniRec</div>
+      <div class="logo">
+        <svg class="tv" viewBox="0 0 48 48" aria-hidden="true">
+          <path class="ant" d="M14 4l7 7M34 4l-7 7" stroke-linecap="round" />
+          <rect x="4" y="11" width="40" height="30" rx="7" />
+          <rect class="eye" x="16" y="23" width="3.6" height="10" rx="1.8" />
+          <rect class="eye" x="28.4" y="23" width="3.6" height="10" rx="1.8" />
+        </svg>
+        <span>AniRec</span>
+      </div>
       <el-menu :default-active="$route.path" router class="menu">
         <el-menu-item index="/home"><el-icon><HomeFilled /></el-icon>首页推荐</el-menu-item>
         <el-menu-item index="/records"><el-icon><Collection /></el-icon>我的追番</el-menu-item>
@@ -53,7 +61,19 @@ async function onCmd (cmd) {
 <style scoped>
 .layout { height: 100vh; }
 .aside { background: #fff; border-right: 1px solid #ebeef5; }
-.logo { font-size: 20px; font-weight: 700; color: var(--brand); padding: 18px 20px; }
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-1);
+  padding: 18px 20px;
+}
+.logo .tv { width: 26px; height: 26px; }
+.logo .tv rect { fill: var(--brand); }
+.logo .tv .ant { stroke: var(--brand); stroke-width: 4; }
+.logo .tv .eye { fill: #fff; }
 .menu { border-right: none; }
 .menu-group { font-size: 12px; color: #c0c4cc; padding: 14px 20px 4px; }
 .header { background: #fff; border-bottom: 1px solid #ebeef5; display: flex; align-items: center; justify-content: space-between; }
