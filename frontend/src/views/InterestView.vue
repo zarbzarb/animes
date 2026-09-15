@@ -243,6 +243,9 @@ onMounted(async () => {
       monthly.value = s.monthly_counts || []
     } catch { /* 概览区留空 */ }
     if (!hasData.value) return   // 纯新用户：空态引导，不加载雷达/漂移
+    // hasData 由 false→true 会触发 v-if 重新挂载图表容器，DOM 更新是异步的：
+    // 不等 nextTick 就 init，三个 ref 还是 null，饼图/柱图会被静默跳过
+    await nextTick()
     drawPie(); drawRating(); drawMonthly()
     const d = await api.get('/api/v1/analysis/interest-radar')
     capsules.value = d.capsules || []

@@ -193,18 +193,15 @@ async function doRegister () {
   if (!ok) return
   busy.value = true
   try {
-    await api.post('/api/v1/auth/register', {
+    // 注册接口本身就返回 token bundle，直接登录态，不再二次调用 login ——
+    // 之前自动登录带上了登录页残留的 captcha_id（一次一密必然校验失败），
+    // 用户就会看到「注册成功」+「验证码过期」同时出现
+    const d = await api.post('/api/v1/auth/register', {
       username: regForm.username,
       nickname: regForm.nickname || regForm.username,
       password: regForm.password,
     })
     ElMessage.success('注册成功，已自动登录')
-    const d = await api.post('/api/v1/auth/login', {
-      username: regForm.username,
-      password: regForm.password,
-      captcha_id: captchaId.value,
-      captcha_code: loginForm.captcha,
-    })
     auth.setToken(d.access_token)
     auth.setUser(d.user)
     router.push('/home')
