@@ -552,7 +552,7 @@ class SqlGateway:
                     "progress": int(wr.progress or 0),
                     "watched_at": wr.watched_at.isoformat() if wr.watched_at else None,
                     "updated_at": wr.updated_at.isoformat() if wr.updated_at else None,
-                    "tags": wr.tags,
+                    "tags": wr.tags, "review": wr.review,
                 })
             return out
 
@@ -630,7 +630,8 @@ class SqlGateway:
                     "status": int(wr.status), "rating": _i(wr.rating),
                     "progress": int(wr.progress or 0),
                     "watched_at": wr.watched_at.isoformat() if wr.watched_at else None,
-                    "updated_at": wr.updated_at.isoformat() if wr.updated_at else None}
+                    "updated_at": wr.updated_at.isoformat() if wr.updated_at else None,
+                    "review": wr.review}
 
     @staticmethod
     def _refresh_anime_popularity(s, anime_pks: Sequence[int]) -> None:

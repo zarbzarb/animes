@@ -51,7 +51,8 @@ def _decorate(r: dict) -> dict:
         "id": r.get("id"),
         "anime": {
             "id": a.get("id"), "src_anime_id": a.get("src_anime_id"),
-            "title": a.get("title"), "type": a.get("type"),
+            "title": a.get("title"), "title_cn": a.get("title_cn"),
+            "type": a.get("type"),
             "year": a.get("year"), "score": a.get("score"),
             "episodes": a.get("episodes"), "image_url": a.get("image_url"),
             "genres": list(a.get("genre_names") or []),
@@ -60,7 +61,7 @@ def _decorate(r: dict) -> dict:
         "status_label": STATUS_LABEL.get(int(r.get("status") or 0), "未知"),
         "rating": r.get("rating"), "progress": r.get("progress"),
         "watched_at": r.get("watched_at"), "updated_at": r.get("updated_at"),
-        "tags": r.get("tags"),
+        "tags": r.get("tags"), "review": r.get("review"),
     }
 
 

@@ -21,23 +21,30 @@
           <CoverImage :src="row.anime?.image_url" :title="row.anime?.title || row.title" w="48px" h="64px" />
         </template>
       </el-table-column>
-      <el-table-column label="番剧" min-width="220" show-overflow-tooltip>
+      <el-table-column label="番剧" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">
-          {{ row.anime?.title || row.title }}
+          {{ row.anime?.title_cn || row.anime?.title || row.title }}
           <el-button text type="primary" size="small" class="brief-btn"
             @click="showDetail(row)">简介</el-button>
         </template>
       </el-table-column>
-      <el-table-column prop="status_label" label="状态" width="90">
+      <el-table-column label="状态" width="104">
         <template #default="{ row }">
-          <el-tag size="small" :type="['info','primary','success','danger'][row.status] || 'info'">
-            {{ row.status_label }}
-          </el-tag>
+          <el-select :model-value="row.status" size="small" class="status-sel"
+            @change="(s) => setStatus(row, s)">
+            <el-option v-for="(label, v) in STATUS" :key="v" :label="label" :value="Number(v)" />
+          </el-select>
         </template>
       </el-table-column>
-      <el-table-column label="评分" width="140">
+      <el-table-column label="评分 / 评价" min-width="250">
         <template #default="{ row }">
-          <el-rate :model-value="row.rating" clearable size="small" @change="(v) => setRating(row, v)" />
+          <div class="rate-row">
+            <el-rate :model-value="row.rating" :max="10" size="small"
+              @change="(v) => setRating(row, v)" />
+            <el-button text type="primary" size="small" class="brief-btn"
+              @click="openReview(row)">{{ row.review ? '改评价' : '写评价' }}</el-button>
+          </div>
+          <div class="review-text" v-if="row.review" @click="openReview(row)">{{ row.review }}</div>
         </template>
       </el-table-column>
       <el-table-column prop="updated_at" label="更新时间" width="170" />
@@ -55,13 +62,31 @@
 
     <el-dialog v-model="adding" title="添加追番" width="420px">
       <el-select v-model="picked" filterable remote :remote-method="searchAnime" :loading="searching"
-        placeholder="输入番剧标题搜索" class="w100">
-        <el-option v-for="a in candidates" :key="a.src_anime_id" :label="`${a.title} (${a.year || '-'})`"
-          :value="a.src_anime_id" />
+        placeholder="输入番剧标题搜索（支持中文译名）" class="w100">
+        <el-option v-for="a in candidates" :key="a.src_anime_id"
+          :label="`${a.title_cn || a.title} (${a.year || '-'})`" :value="a.src_anime_id" />
       </el-select>
       <template #footer>
         <el-button @click="adding = false">取消</el-button>
         <el-button type="primary" :disabled="!picked" @click="add">加入追番</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="reviewOpen" title="评分与评价" width="480px">
+      <div class="review-form">
+        <div class="form-row">
+          <span class="lbl">评分</span>
+          <el-rate v-model="reviewForm.rating" :max="10" show-score score-template="{value} 分" />
+        </div>
+        <div class="form-row">
+          <span class="lbl">评价</span>
+          <el-input v-model="reviewForm.review" type="textarea" :rows="4" maxlength="500"
+            show-word-limit placeholder="写点观后感吧（留空保存 = 清除评价）" />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="reviewOpen = false">取消</el-button>
+        <el-button type="primary" @click="saveReview">保存</el-button>
       </template>
     </el-dialog>
 
@@ -141,5 +166,11 @@ onMounted(load)
 .pager { margin-top: 14px; justify-content: flex-end; }
 .w100 { width: 100%; }
 .brief-btn { padding: 0; margin-left: 8px; }
-.status-tag { cursor: pointer; }
+.status-sel { width: 88px; }
+.rate-row { display: flex; align-items: center; }
+.review-text { margin-top: 2px; font-size: 12px; color: var(--text-3, #909399);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.review-form .form-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.review-form .lbl { width: 36px; flex-shrink: 0; color: var(--text-2, #606266);
+  font-size: 13px; line-height: 32px; }
 </style>

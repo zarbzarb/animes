@@ -5,7 +5,16 @@
       <template #header>我的画像概览
         <span class="dim">(分析页数据与推荐引擎同源)</span>
       </template>
-      <el-empty v-if="!profile.total_records && !busy" description="还没有追番记录，先去加几部番吧" />
+      <el-empty v-if="!hasData && !busy">
+        <template #description>
+          <p class="empty-tip">你的兴趣画像还是一张白纸 —— 追几部番、打几个分，<br>
+            这里就会长出你的专属分析：兴趣雷达、题材漂移、观看节奏……</p>
+        </template>
+        <div class="cta-row">
+          <el-button type="primary" @click="$router.push('/library')">去番剧库挑几部</el-button>
+          <el-button @click="$router.push('/')">看看首页推荐</el-button>
+        </div>
+      </el-empty>
       <template v-else>
         <div class="metric-row">
           <div class="metric"><b>{{ profile.total_records || 0 }}</b><span>追番总数</span></div>
@@ -26,6 +35,8 @@
       </template>
     </el-card>
 
+    <!-- 有数据才渲染分析图：新用户看到的是引导，不是一排空白坐标系 -->
+    <template v-if="hasData">
     <el-row :gutter="16">
       <el-col :span="12">
         <el-card shadow="never">
@@ -91,6 +102,7 @@
         </el-table-column>
       </el-table>
     </el-card>
+    </template>
   </div>
 </template>
 
@@ -112,6 +124,8 @@ const topGenres = computed(() =>
   (profile.value.top_genres || []).map((g) => g.genre || g.name || g).filter(Boolean).slice(0, 8))
 const activityCn = computed(() =>
   ({ low: '低', medium: '中', high: '高' })[profile.value.activity_label] || '—')
+/* 新用户（无任何追番记录）走引导空态，不渲染一排空图 */
+const hasData = computed(() => (profile.value.total_records || 0) > 0)
 
 const fmt = (v) => (v == null ? '—' : Number(v).toFixed(2))
 const pct = (v) => (v == null ? '—' : `${(Number(v) * 100).toFixed(0)}%`)
@@ -241,4 +255,6 @@ onBeforeUnmount(() => { charts.forEach((c) => c.dispose()); charts = [] })
 .gt { margin-right: 4px; }
 .summary { font-size: 13px; color: var(--text-2); }
 .dim { font-size: 12px; color: var(--text-3); font-weight: 400; margin-left: 6px; }
+.empty-tip { color: var(--text-2, #606266); line-height: 1.8; }
+.cta-row { display: flex; gap: 12px; justify-content: center; }
 </style>
