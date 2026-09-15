@@ -17,12 +17,15 @@
       </el-empty>
       <template v-else>
         <div class="metric-row">
-          <div class="metric"><b>{{ profile.total_records || 0 }}</b><span>追番总数</span></div>
-          <div class="metric"><b>{{ activityCn }}</b><span>活跃度</span></div>
-          <div class="metric"><b>{{ fmt(profile.watch_intensity) }}</b><span>观看强度</span></div>
-          <div class="metric"><b>{{ fmt(profile.avg_rating_tendency) }}</b><span>评分倾向</span></div>
-          <div class="metric"><b>{{ pct(profile.dropped_rate) }}</b><span>弃番率</span></div>
+          <div class="metric"><b>{{ profile.total_records || nRecords }}</b><span>追番总数</span></div>
+          <div class="metric"><b>{{ profileReady ? activityCn : '…' }}</b><span>活跃度</span></div>
+          <div class="metric"><b>{{ profileReady ? fmt(profile.watch_intensity) : '…' }}</b><span>观看强度</span></div>
+          <div class="metric"><b>{{ profileReady ? fmt(profile.avg_rating_tendency) : '…' }}</b><span>评分倾向</span></div>
+          <div class="metric"><b>{{ profileReady ? pct(profile.dropped_rate) : '…' }}</b><span>弃番率</span></div>
         </div>
+        <el-alert v-if="!profileReady" type="info" :closable="false" class="profile-pending"
+          title="画像引擎正在计算你的兴趣画像（约需半分钟），稍后刷新可见完整画像"
+          description="下方分布图基于你的实际追番记录，已实时更新。" show-icon />
         <div class="tag-row" v-if="topGenres.length">
           <span class="lbl">最爱题材</span>
           <el-tag v-for="g in topGenres" :key="g" effect="plain" size="large" class="gt">{{ g }}</el-tag>
@@ -116,16 +119,20 @@ const radarEl = ref(null); const trendEl = ref(null)
 const pieEl = ref(null); const ratingEl = ref(null); const monthEl = ref(null)
 const capsules = ref([]); const points = ref([])
 const profile = ref({})
+const nRecords = ref(0)
 const statusDist = ref({}); const ratingDist = ref([]); const monthly = ref([])
 const granularity = ref('quarter')
 let charts = []
+
+/* 有没有数据看**实际追番记录**（后端直接数 watch_record），
+   不看 A1 画像 —— 画像是异步重排落库的，新用户加完番有几十秒空窗 */
+const hasData = computed(() => nRecords.value > 0 || (profile.value.total_records || 0) > 0)
+const profileReady = computed(() => (profile.value.total_records || 0) > 0)
 
 const topGenres = computed(() =>
   (profile.value.top_genres || []).map((g) => g.genre || g.name || g).filter(Boolean).slice(0, 8))
 const activityCn = computed(() =>
   ({ low: '低', medium: '中', high: '高' })[profile.value.activity_label] || '—')
-/* 新用户（无任何追番记录）走引导空态，不渲染一排空图 */
-const hasData = computed(() => (profile.value.total_records || 0) > 0)
 
 const fmt = (v) => (v == null ? '—' : Number(v).toFixed(2))
 const pct = (v) => (v == null ? '—' : `${(Number(v) * 100).toFixed(0)}%`)
@@ -222,11 +229,13 @@ onMounted(async () => {
     try {
       const s = await api.get('/api/v1/analysis/profile-summary')
       profile.value = s.profile || {}
+      nRecords.value = s.n_records || 0
       statusDist.value = s.status_dist || {}
       ratingDist.value = s.rating_dist || []
       monthly.value = s.monthly_counts || []
-      drawPie(); drawRating(); drawMonthly()
     } catch { /* 概览区留空 */ }
+    if (!hasData.value) return   // 纯新用户：空态引导，不加载雷达/漂移
+    drawPie(); drawRating(); drawMonthly()
     const d = await api.get('/api/v1/analysis/interest-radar')
     capsules.value = d.capsules || []
     drawRadar(d.radar || [])
@@ -257,4 +266,5 @@ onBeforeUnmount(() => { charts.forEach((c) => c.dispose()); charts = [] })
 .dim { font-size: 12px; color: var(--text-3); font-weight: 400; margin-left: 6px; }
 .empty-tip { color: var(--text-2, #606266); line-height: 1.8; }
 .cta-row { display: flex; gap: 12px; justify-content: center; }
+.profile-pending { margin-bottom: 12px; }
 </style>

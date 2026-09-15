@@ -1,19 +1,22 @@
 <template>
   <div>
-    <el-alert v-if="coldStart" type="info" :closable="false" class="cold-tip"
+    <el-alert v-if="fallback" type="info" :closable="false" class="cold-tip"
       title="欢迎来到 AniRec！你还没有追番记录"
       description="当前展示的是全站热门。去「我的追番」添加几部看过的番，或直接评分，推荐会立刻变得个性化。" show-icon />
+    <el-alert v-else-if="coldStart" type="info" :closable="false" class="cold-tip"
+      title="你的观看记录还不多（不足 10 部）"
+      description="当前已结合冷启动策略为你推荐；刚添加的番画像约需半分钟生效，多评分会让推荐越来越准。" show-icon />
 
     <el-alert v-if="degraded.length" type="warning" :closable="false" class="degraded"
       :title="`部分能力已降级：${degraded.join('、')}`" show-icon />
 
     <div class="toolbar">
-      <el-radio-group v-model="mode" @change="load">
+      <el-radio-group v-model="mode" @change="onModeChange">
         <el-radio-button value="feed">综合推荐</el-radio-button>
         <el-radio-button value="genre">分类推荐</el-radio-button>
       </el-radio-group>
       <el-select v-if="mode === 'genre'" v-model="genreId" placeholder="选题材" class="genre-sel" @change="load">
-        <el-option v-for="g in genres" :key="g.genre_id" :label="g.name" :value="g.genre_id" />
+        <el-option v-for="g in genres" :key="g.genre_id" :label="g.name_cn || g.name" :value="g.genre_id" />
       </el-select>
       <el-button :icon="Refresh" :loading="busy" @click="load(true)">强制刷新</el-button>
       <span v-if="metaInfo" class="meta-info">{{ metaInfo }}</span>
@@ -44,6 +47,7 @@ const genres = ref([])
 const items = ref([])
 const meta = ref({})
 const coldStart = ref(false)
+const fallback = ref(false)
 const degraded = computed(() => meta.value?.degraded || [])
 
 const metaInfo = computed(() => {
@@ -65,6 +69,9 @@ async function load (force = false) {
     items.value = d.items || []
     meta.value = d.meta || {}
     coldStart.value = Boolean(d.is_cold_start_user || d.meta?.used_fallback)
+    // 只有真兜底（A4 走 L4 全站热门）才说"全站热门"；
+    // is_cold_start_user 只是记录数 <10，推荐本身已个性化，文案必须分开
+    fallback.value = Boolean(d.meta?.used_fallback)
   } finally { busy.value = false }
 }
 

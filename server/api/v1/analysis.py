@@ -60,6 +60,9 @@ async def profile_summary(user: dict = Depends(current_user)) :
 
     return Enveloped(data={
         "profile": profile,
+        # watch_record 直接计数，不依赖 A1 落库 —— 新用户加完番画像异步重排
+        # 有几十秒延迟，这段时间里分布图照常可画，只有"画像卡"需要等 A1
+        "n_records": len(rows),
         "status_dist": status_dist,
         "rating_dist": [{"rating": k, "count": v} for k, v in sorted(rating_dist.items())],
         "monthly_counts": [{"period": k, "count": v}
