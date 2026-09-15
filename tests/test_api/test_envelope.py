@@ -23,6 +23,11 @@ from __future__ import annotations
 import re
 
 import pytest
+# ⚠️ 必须模块级 import：本文件有 `from __future__ import annotations`，
+# 测试内定义的路由 handler 的注解是**字符串**，FastAPI 按模块全局命名空间求值；
+# 放在测试函数里 import 的话解析不到，`background: BackgroundTasks` 会被当成
+# 普通查询参数（422 Field required）—— 症状完全不像 import 问题。
+from fastapi import BackgroundTasks, FastAPI
 
 #: 信封的六个字段，一个不多一个不少。
 ENVELOPE_KEYS = {"code", "message", "data", "meta", "trace_id", "elapsed_ms"}
@@ -184,3 +189,32 @@ class TestErrorPathsAlsoEnveloped:
         """报错必须点名是哪个字段 —— 否则前端只能把整个表单标红。"""
         resp = client.post("/api/v1/auth/login", json={"username": "demo"})
         assert "password" in resp.json()["message"]
+
+
+class TestBackgroundTasksSurviveEnvelope:
+    """回归（2026-09-15，真实事故）：`EnvelopeRoute` 重包信封时新建 Response，
+    必须把 FastAPI 挂在原响应上的 BackgroundTasks 带过去。丢了它，所有
+    `background.add_task`（如 POST /records 的增量重排）都被静默丢弃 ——
+    接口返回 `recompute_scheduled=true`，任务永不执行，user_profile 永不更新，
+    且日志无任何报错。"""
+
+    def test_background_task_still_runs(self):
+        from fastapi.testclient import TestClient
+
+        from server.core.response import EnvelopeRoute
+
+        ran: list[str] = []
+        app = FastAPI()
+        app.router.route_class = EnvelopeRoute
+
+        @app.post("/t")
+        async def t(background: BackgroundTasks):
+            background.add_task(ran.append, "ok")
+            return {"hello": "world"}
+
+        with TestClient(app) as c:
+            resp = c.post("/t")
+
+        assert resp.status_code == 200
+        assert resp.json()["code"] == 0          # 信封形状不受影响
+        assert ran == ["ok"], "BackgroundTasks 被 EnvelopeRoute 丢弃了"

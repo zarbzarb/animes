@@ -23,7 +23,7 @@ from agents.profile.config import ProfileConfig
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["collect_facts", "load_cached_profile", "recent_items",
+__all__ = ["collect_facts", "load_cached_profile", "record_count", "recent_items",
            "save_profile", "recent_history"]
 
 # watch_record.status（与 server/db/models/record.py 对齐；AGENTS 层不 import server，
@@ -50,6 +50,17 @@ def _recent_cutoff(records: list[dict], window_days: int) -> Optional[str]:
         return None
     from datetime import timedelta
     return (latest - timedelta(days=window_days)).isoformat(timespec="seconds")
+
+
+def record_count(user_id: int) -> int:
+    """该用户的实际追番记录数（单条 COUNT，画像新鲜度校验用）。
+
+    为什么需要它（2026-09-15 真实事故）：注册时会落一行 `total_records=0`
+    的空画像，`_usable` 判定"零记录零题材"是合法新用户状态 → 直接复用，
+    用户之后加再多番，A1 也永远返回这行过期画像（且无任何报错）。
+    记录数对不上 = 画像过期，必须重算。
+    """
+    return int(require_gateway().count_watch_records(user_id) or 0)
 
 
 def collect_facts(user_id: int, cfg: ProfileConfig) -> dict:

@@ -110,7 +110,7 @@
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
+import { onMounted, onBeforeUnmount, ref, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { api } from '../api/client'
 

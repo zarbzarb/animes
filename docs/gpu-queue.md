@@ -66,7 +66,7 @@ $PY scripts/eval_content_fusion.py --ckpt data/checkpoints/<content_best.pt> --z
 ```bash
 $PY scripts/run_baselines.py --baseline gru4rec --scale dev  --split val      # 0.9 h，方向确认  ✅ 2026-09-15
 $PY scripts/run_baselines.py --baseline gru4rec --scale main --split val  --seed 42   # ✅ 2026-09-15（2838s）
-$PY scripts/run_baselines.py --baseline gru4rec --scale main --split test --seed 42   # 🔵 进行中（ZIuhXs）→ ×3 种子
+$PY scripts/run_baselines.py --baseline gru4rec --scale main --split test --seed 42   # ✅ 2026-09-15（2950s，0.9709/0.7878）→ ×3 种子
 ```
 
 > ✅ dev 档已完成：val hr@10 0.9639 / ndcg@10 0.7935（seed 42，30ep，1731s），

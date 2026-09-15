@@ -183,6 +183,11 @@ class EnvelopeRoute(APIRoute):
                 status_code=response.status_code,
                 media_type="application/json",
                 headers=headers,
+                # ⚠️ 必须把 FastAPI 挂在原响应上的 BackgroundTasks 带过去，
+                # 否则所有 background.add_task（如 POST /records 的增量重排）
+                # 都会被静默丢弃：接口返回 recompute_scheduled=true，任务永不执行。
+                # 实测症状：加番后 user_profile 永不更新（2026-09-15）。
+                background=getattr(response, "background", None),
             )
 
         return custom_route_handler

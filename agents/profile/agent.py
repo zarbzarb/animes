@@ -63,18 +63,39 @@ class ProfileAgent(BaseAgent):
     async def _get(self, payload: dict, env: Envelope) -> dict:
         inp = ProfileInput.model_validate(payload)
         cached = await self._cache_get(inp.user_id)
-        if cached is not None and not inp.force_refresh:
+        if cached is not None and not inp.force_refresh \
+                and self._fresh(cached, inp.user_id):
             self._last_cache_hit = True
             return cached
 
         stored = self._load_stored(inp.user_id)
-        if stored is not None and not inp.force_refresh and self._usable(stored):
+        if stored is not None and not inp.force_refresh and self._usable(stored) \
+                and self._fresh(stored, inp.user_id):
             await self._cache_set(inp.user_id, stored)
             return stored
 
-        # 没有画像、或已存画像是**半成品** → 就地算一次。
-        # `persist=True`：半成品行要被覆盖掉，否则永远修不好。
+        # 没有画像、已存画像是**半成品**、或画像已过期（记录数对不上）→ 就地算一次。
+        # `persist=True`：半成品/过期行要被覆盖掉，否则永远修不好。
         return await self._compute_and_store(inp.user_id, env, persist=True)
+
+    def _fresh(self, row: dict, user_id: int) -> bool:
+        """已存/已缓存画像是否与实际记录数一致（过期检测）。
+
+        ⚠️ `_usable` 只看画像内容本身，拦不住"注册时落的空画像"：零记录零题材
+        是合法新用户状态，之后加番，画像不会自己变。所以还要对账 —— 画像里的
+        `total_records` 与实际记录数不一致就是过期（2026-09-15 事故：用户加了
+        十几部番，兴趣分析与推荐永远停在注册时刻的空画像）。
+        """
+        try:
+            actual = adapter.record_count(user_id)
+        except Exception as exc:                # 对账失败别把读路径搞挂
+            logger.warning("A1 记录数对账失败（按过期处理）：%s", exc)
+            return False
+        stored_n = int(row.get("total_records") or 0) if row else -1
+        if stored_n == actual:
+            return True
+        logger.info("A1 画像过期（stored=%s actual=%s）→ 重算", stored_n, actual)
+        return False
 
     @staticmethod
     def _usable(row: dict) -> bool:

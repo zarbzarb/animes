@@ -217,8 +217,12 @@ async def _invalidate(user_id: int) -> None:
     try:
         cache = get_cache()
         await cache.delete_prefix(rec_scope_prefix(int(user_id)))
+        # 画像缓存也要清：A1 的键是 `profile:{uid}`（不在 rec: 前缀下），
+        # 不清的话记录变更后 1h 内 A1 还在返回旧画像（2026-09-15 事故）。
+        from server.core.cache import profile_key
+        await cache.delete(profile_key(int(user_id)))
     except Exception as exc:
-        logger.warning("清推荐缓存失败：%s", exc)
+        logger.warning("清推荐/画像缓存失败：%s", exc)
 
 
 async def _recompute(user_id: int) -> None:
