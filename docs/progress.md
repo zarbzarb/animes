@@ -222,7 +222,7 @@ Windows 因哈希不符拒绝加载 → 设备 Code 52 → CUDA 报告无设备�
 | **M2.6** ✅ | 内容融合（排序侧） | 排序侧 7:3 加权 + 冷启动 5:5 自动切权 | `models/content_encoder/fusion.py`、`scripts/eval_content_fusion.py` | ✅ `fusion_score()` 契约达成；实测**后验融合无增益**（见 §4.1 M2.6），E2 按此口径如实报告 |
 | **M2.6b** ✅ | 内容融合（候选侧） | 内容向量拼进物品表示、端到端训练；`concat` 与零初始化残差 `add` 两臂 | `models/content_encoder/model.py`、`models/sasrec/model.py` 的 `repr_provider` | ✅ 实现 + 39 例单测（全仓 375 例全绿）；`add` 臂 **0.7895 > 基线 0.7871**（单种子 8 epoch）；**默认口径锁定 `add`**（决策 D5，dev 档 30 epoch 复核中）；concat 无稳定增益（见 §4.1 M2.6b） |
 | **M2.7** 🔵 | 对比基线 | ItemCF（共现 + 余弦，TopK 200 邻居）、GRU4Rec（隐藏 64，1 层）、热度 | `models/baselines/`、`scripts/run_baselines.py` | 🔵 **实现完成 + 热度/ItemCF 已出正式数字**（main/test：热度 0.8996/0.6645、ItemCF **0.9597/0.7514**，零训练零参数）；GRU4Rec smoke/dev/main(val) 已出数（main/val 0.9658/0.7966），main/test 进行中（见 §4.1 M2.7） |
-| **M2.8** | 实验编排 | `run_experiments.py` 按 `configs/experiment.yaml` 串起 E1~E4，落盘 `experiments/{id}/`，回写 `result-analysis.md` | `scripts/run_experiments.py`、`scripts/plot_results.py` | 一次命令跑完四组；输出目录结构与 `evaluation-plan.md` 8.2 一致 |
+| **M2.8** 🔵 | 实验编排 | `run_experiments.py` 按 `configs/experiment.yaml` 串起 E1~E4，落盘 `experiments/{id}/`，回写 `result-analysis.md` | `scripts/run_experiments.py`、`scripts/plot_results.py` | 🔵 **编排脚本完成（2026-09-15）**：E1/E2/E4 全部可编排（复用检测 + test/val 进程内评估 + E4 分题材矩阵 + summary.csv + 配置/commit/环境快照），7 例单测；**E3 拒绝执行**（配置仍是占位开关，见 gpu-queue §4.1）、HPO 编排未接；`--dry-run` 出计划，全矩阵 ≈26.8 h GPU。`plot_results.py`（M2.9 前半）未做 |
 | **M2.9** | 填表与作图 | 真实指标填入 `result-analysis.md` / `ablation-study.md`，生成 4 张图 | 指标表 + `figures/*.png` | **每个数字都有出处（实验目录名）**，无出处不许填 |
 
 推荐执行顺序即上表自上而下。**M2.0–M2.6b 已完成；M2.7 实现完成、热度与 ItemCF 已出数字，GRU4Rec 已出 dev + main(val)，main/test 进行中**；环境已无阻塞。

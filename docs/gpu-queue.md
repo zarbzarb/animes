@@ -178,10 +178,26 @@ M2.4 的一次性测量，比实测慢约 22% —— **等 main 档真跑一次�
 **必须做**：重写 E3 组配置（`arch` / `content_fusion` / `content_mode`）+
 训练时按 `strip_from_train_item_ids` 过滤序列 + 冷启动评估切分。
 
-### 4.2 ☐ `scripts/run_experiments.py`（M2.8）不存在
+### 4.2 ✅ `scripts/run_experiments.py`（M2.8）已就绪（2026-09-15）
 
-需要它统一 E1~E4 的种子、档位、评估子集与目录结构（`experiments/{id}/`），
-按 `configs/experiment.yaml` 驱动。**这是 2.4~2.8 的前置**。
+统一编排 E1/E2/E4 的种子、档位、评估子集与目录结构（`experiments/{id}/`），
+按 `configs/experiment.yaml` 驱动：
+
+```bash
+$PY scripts/run_experiments.py --group all --dry-run   # 先看计划（≈26.8 h）
+$PY scripts/run_experiments.py --group E1              # 主表（gru4rec 已有报告自动复用）
+$PY scripts/run_experiments.py --group E2              # 消融（E2_1/E2_4 复用 E1 权重重评）
+$PY scripts/run_experiments.py --group E4              # 分题材矩阵（零训练）
+```
+
+* 复用检测：`logs/baseline_*_seed*.json` 与 `data/checkpoints/*_seed*_best.pt`
+  已存在即跳过（`--force` 重跑），所以已跑完的 popularity/itemcf/gru4rec
+  不会被重复训练
+* 评估子集固定 seed=42（与 train.py / run_baselines.py 同一约定）；
+  E1 神经模型的 test 报数由编排器进程内完成（`load_model_from_checkpoint`
+  按 meta 重建，含内容融合）
+* **E3 仍拒绝执行**（见 §4.1）；HPO 编排未接。7 例单测在
+  `tests/test_experiments/`
 
 ### 4.3 ☐ `scripts/plot_results.py`（M2.9）不存在
 
