@@ -207,10 +207,18 @@ function drawTrend (trend) {
   }))
   init(trendEl, {
     tooltip: { trigger: 'axis' },
-    legend: { type: 'scroll', bottom: 0 },
-    grid: { left: 40, right: 20, top: 20, bottom: 44 },
-    xAxis: { type: 'category', data: periods },
-    yAxis: { type: 'value', name: '消费次数' },
+    legend: { type: 'scroll', bottom: 0, textStyle: { fontSize: 12, color: '#606266' } },
+    grid: { left: 56, right: 24, top: 36, bottom: 48 },
+    xAxis: {
+      type: 'category', data: periods,
+      axisLabel: { fontSize: 12, color: '#606266', rotate: 30 },
+    },
+    yAxis: {
+      type: 'value', name: '消费次数',
+      nameTextStyle: { fontSize: 13, color: '#303133', align: 'left', padding: [0, 0, 6, -30] },
+      axisLabel: { fontSize: 12, color: '#606266' },
+      splitLine: { lineStyle: { color: '#ebeef5' } },
+    },
     series,
   })
 }

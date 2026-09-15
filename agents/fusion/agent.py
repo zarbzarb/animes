@@ -213,8 +213,32 @@ class FusionRankAgent(BaseAgent):
         return out
 
     # ------------------------------------------------------------ 重排
+    def _genre_scoped(self, scored: list[dict], facts: dict[int, dict],
+                      gid: int, top_n: int) -> list[dict]:
+        """分类推荐（scene=1）：题材命中的候选优先占据名额。
+
+        ⚠️ A4 此前只把 `genre_id` 用在**缓存键**上 —— 候选集从不按题材
+        筛选，换任何题材返回的都是同一份列表（线上实测，三个 gid 完全相同）。
+        这里**不强过滤**：冷门题材命中不足 top_n 时用其余候选补位，
+        避免候选不足退化成 L4 全站热门兜底（那等于没有分类）。
+        """
+        hit: list[dict] = []
+        rest: list[dict] = []
+        for t in scored:
+            gs = {int(g) for g in ((facts.get(int(t["anime_id"])) or {})
+                                   .get("genres") or [])}
+            (hit if gid in gs else rest).append(t)
+        if not hit:
+            return scored            # 候选全不命中（异常情况）→ 走通用排序
+        need = max(int(top_n) - len(hit), 0)
+        return hit + rest[:need]
+
     def _select(self, scored: list[dict], facts: dict[int, dict],
                 inp: FusionInput) -> list[dict]:
+        # 分类推荐：先按题材限定候选池，再做 MMR 多样性
+        if inp.genre_id:
+            scored = self._genre_scoped(scored, facts, int(inp.genre_id),
+                                        int(inp.top_n))
         # MMR 的相关性输入用**归一化后的融合分**（否则量级差异会让 λ 失去意义）
         top = scored[: max(int(inp.top_n) * 4, int(inp.top_n) + 20)]
 
