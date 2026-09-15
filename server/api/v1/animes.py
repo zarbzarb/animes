@@ -118,6 +118,18 @@ async def similar(anime_id: int, size: int = Query(12, ge=1, le=50)) :
                            "n": len(items), "method": method})
 
 
+@router.get("/animes/{anime_id}/reviews", summary="本站用户评价列表")
+async def reviews(anime_id: int, size: int = Query(20, ge=1, le=50)) :
+    """文字评价（与 community_rating 并列）。匿名化到昵称级别。"""
+    gw = get_gw()
+    anime = gw.get_anime(int(anime_id))
+    if not is_visible_anime(anime):
+        raise not_found(f"动漫 {anime_id} 不存在")
+    # get_anime 里已带内部主键 id；anime_reviews 收内部 pk
+    rows = gw.anime_reviews(int(anime["id"]), limit=int(size))
+    return Enveloped(data={"anime_id": int(anime_id), "list": rows, "n": len(rows)})
+
+
 # ---------------------------------------------------------------- 私有
 
 
@@ -142,7 +154,8 @@ def _my_record(user_id: int, anime_id: int) -> dict | None:
     try:
         for r in get_gw().get_watch_records(user_id):
             if int(r.get("src_anime_id") or 0) == int(anime_id):
-                return {"status": r.get("status"), "rating": r.get("rating"),
+                return {"id": r.get("id"), "status": r.get("status"),
+                        "rating": r.get("rating"), "review": r.get("review"),
                         "progress": r.get("progress"),
                         "watched_at": r.get("watched_at")}
     except Exception as exc:

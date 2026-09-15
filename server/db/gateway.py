@@ -243,6 +243,30 @@ class SqlGateway:
             return {int(r.anime_id): {"avg": round(float(r.avg_r), 2),
                                       "count": int(r.n)} for r in rows}
 
+    def anime_reviews(self, anime_pk: int, limit: int = 20) -> list[dict]:
+        """某番的本站文字评价（非空才收录，按更新时间倒序）。
+
+        与 `community_ratings`（纯分数聚合）互补：弹窗里"评分"看聚合、
+        "评价"看这里。匿名化到昵称+头像级别，不暴露 user_id。
+        """
+        with session_scope() as s:
+            rows = s.execute(
+                select(WatchRecord, User.nickname, User.username, User.avatar_url)
+                .join(User, User.id == WatchRecord.user_id)
+                .where(WatchRecord.anime_id == int(anime_pk),
+                       WatchRecord.review.is_not(None),
+                       WatchRecord.review != "")
+                .order_by(WatchRecord.updated_at.desc())
+                .limit(int(limit))).all()
+            return [{
+                "nickname": (nk or un or "匿名用户"),
+                "avatar_url": av,
+                "rating": _i(wr.rating),
+                "status": int(wr.status),
+                "review": wr.review,
+                "updated_at": wr.updated_at.isoformat() if wr.updated_at else None,
+            } for wr, nk, un, av in rows]
+
     @staticmethod
     def _genre_ids_of(s, anime_pks: Sequence[int]) -> dict[int, list[int]]:
         if not anime_pks:
@@ -568,6 +592,9 @@ class SqlGateway:
                 wr.progress = int(data["progress"])
             if "tags" in data:
                 wr.tags = data["tags"]
+            if "review" in data:
+                # 允许置空（传空串 = 清除评价），与 rating 的"不传=不改"区分
+                wr.review = (data["review"] or "").strip()[:500] or None
             wd = _as_date(data.get("watched_at"))
             if wd is not None:
                 wr.watched_at = wd

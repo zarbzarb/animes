@@ -41,6 +41,8 @@ WEB_DIR = PROJECT_ROOT / "web"
 # 生产前端的构建产物（`cd frontend && npm run build`）。
 # 存在时优先托管它，`web/index.html` 退为无构建环境下的演示页。
 DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
+# 用户上传（头像等）。放 data/ 下与代码分离，重启/重建不影响。
+UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 
 
 @asynccontextmanager

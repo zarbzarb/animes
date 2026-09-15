@@ -52,6 +52,7 @@ PUBLIC_ENDPOINTS = frozenset({
     ("GET", "/api/v1/animes"),                  # 匿名可浏览
     ("GET", "/api/v1/animes/{anime_id}"),
     ("GET", "/api/v1/animes/{anime_id}/similar"),
+    ("GET", "/api/v1/animes/{anime_id}/reviews"),  # 评价列表：匿名可浏览（与详情/相似同级）
     ("GET", "/api/v1/genres"),
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/register"),

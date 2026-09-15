@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, Field
 
 from server.core.exceptions import BizError, ErrCode, invalid_param
-from server.core.response import make_router, Enveloped
+from server.core.response import make_router, Enveloped, new_trace_id
 from server.core.security import hash_password, verify_password
 from server.deps import current_user, get_gw
 
@@ -64,6 +64,36 @@ async def update_me(body: ProfilePatch,
                                detail={"field": "email"})
     gw.update_user(uid, data)
     return Enveloped(data=_me(gw.get_user(uid) or user), code=0, message="已更新")
+
+
+@router.post("/me/avatar", summary="上传头像")
+async def upload_avatar(file: UploadFile = File(...),
+                        user: dict = Depends(current_user)) :
+    """头像上传：校验类型/大小 → 存 `data/uploads/` → 更新 `user.avatar_url`。
+
+    返回相对路径（/static/uploads/...），前端拼域名即可；旧头像文件不删
+    （同名覆盖前先换文件名，避免浏览器缓存看到旧图）。
+    """
+    ext_map = {"image/jpeg": ".jpg", "image/png": ".png",
+               "image/webp": ".webp", "image/gif": ".gif"}
+    ext = ext_map.get(file.content_type or "")
+    if ext is None:
+        raise invalid_param("只支持 jpg / png / webp / gif 格式")
+    blob = await file.read()
+    if len(blob) > 2 * 1024 * 1024:
+        raise invalid_param("头像不能超过 2MB")
+    if not blob:
+        raise invalid_param("文件为空")
+
+    from server.core.config import PROJECT_ROOT
+    updir = PROJECT_ROOT / "data" / "uploads"
+    updir.mkdir(parents=True, exist_ok=True)
+    name = f"avatar_{int(user['id'])}_{new_trace_id()[:8]}{ext}"
+    (updir / name).write_bytes(blob)
+
+    url = f"/static/uploads/{name}"
+    get_gw().update_user(int(user["id"]), {"avatar_url": url})
+    return Enveloped(data={"avatar_url": url}, code=0, message="已上传")
 
 
 @router.put("/me/password", summary="改密码")

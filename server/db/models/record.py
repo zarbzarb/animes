@@ -15,7 +15,7 @@ from datetime import date
 from typing import Optional
 
 from sqlalchemy import (
-    Date, ForeignKey, Index, Integer, JSON, SmallInteger, UniqueConstraint,
+    Date, ForeignKey, Index, Integer, JSON, SmallInteger, String, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,6 +54,8 @@ class WatchRecord(Base, TimestampMixin):
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     watched_at: Mapped[Optional[date]] = mapped_column(Date, default=None)
     tags: Mapped[Optional[list]] = mapped_column(JSON, default=None)
+    # 文字评价（用户主观短评，≤500 字；与 1-10 的 rating 并列，可只填其一）
+    review: Mapped[Optional[str]] = mapped_column(String(500), default=None)
 
     anime: Mapped[Anime] = relationship(lazy="selectin")
 

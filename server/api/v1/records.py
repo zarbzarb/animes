@@ -31,6 +31,7 @@ class RecordIn(BaseModel):
     progress: int | None = Field(None, ge=0)
     watched_at: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     tags: list[str] | None = None
+    review: str | None = Field(None, max_length=500, description="文字评价，空串=清除")
 
 
 class RecordPatch(BaseModel):
@@ -39,6 +40,7 @@ class RecordPatch(BaseModel):
     progress: int | None = Field(None, ge=0)
     watched_at: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     tags: list[str] | None = None
+    review: str | None = Field(None, max_length=500, description="文字评价，空串=清除")
 
 
 def _decorate(r: dict) -> dict:

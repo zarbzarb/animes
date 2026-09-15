@@ -49,6 +49,32 @@
           <el-button v-if="summaryText && summaryText.length > 120" text type="primary" size="small"
             class="expand" @click="expanded = !expanded">{{ expanded ? '收起' : '展开全部' }}</el-button>
         </div>
+
+        <div class="summary-block">
+          <div class="sum-head">本站评价<span v-if="reviews.length" class="sum-lang">（{{ reviews.length }} 条）</span></div>
+
+          <!-- 我的评价：追番过才能写 -->
+          <div v-if="myRecord" class="my-review">
+            <el-input v-model="myReview" type="textarea" :rows="2" maxlength="500" show-word-limit
+              :placeholder="myRecord.review ? '修改你的评价…' : '写下你的看法（选填，可与评分并存）…'" />
+            <div class="review-ops">
+              <el-rate :model-value="myRating || 0" :clearable="false" size="small"
+                @change="(v) => { myRating = v }" />
+              <el-button type="primary" size="small" :loading="savingReview" @click="saveReview">保存评价</el-button>
+            </div>
+          </div>
+          <div v-else class="review-hint">追番后即可评分并写评价</div>
+
+          <div v-if="!reviews.length" class="review-empty">还没有人写评价，来抢第一发吧</div>
+          <div v-for="(r, i) in reviews" :key="i" class="review-item">
+            <div class="rv-head">
+              <b class="rv-name">{{ r.nickname }}</b>
+              <span v-if="r.rating" class="rv-rating">★ {{ r.rating }}</span>
+              <span class="rv-time">{{ (r.updated_at || '').slice(0, 10) }}</span>
+            </div>
+            <p class="rv-text">{{ r.review }}</p>
+          </div>
+        </div>
       </template>
     </div>
   </el-dialog>
@@ -97,6 +123,42 @@ const myLabel = computed(() => {
   const r = detail.value?.my_record
   return r ? `我的追番：${statusNames[r.status] ?? '已收藏'}` : ''
 })
+const myRecord = computed(() => detail.value?.my_record || null)
+
+/* ---- 本站评价 ---- */
+const reviews = ref([])
+const myReview = ref(''); const myRating = ref(0); const savingReview = ref(false)
+
+async function loadReviews (id) {
+  try {
+    const d = await api.get(`/api/v1/animes/${id}/reviews`)
+    reviews.value = d.list || []
+  } catch { reviews.value = [] }
+}
+
+watch(myRecord, (r) => {
+  myReview.value = r?.review || ''
+  myRating.value = r?.rating || 0
+}, { immediate: true })
+
+async function saveReview () {
+  const r = myRecord.value
+  if (!r?.id) return
+  if (!myReview.value.trim() && !myRating.value) {
+    ElMessage.info('写点文字或打个分再保存吧'); return
+  }
+  savingReview.value = true
+  try {
+    const body = {}
+    if (myReview.value.trim()) body.review = myReview.value.trim()
+    if (myRating.value) body.rating = myRating.value
+    await api.put(`/api/v1/records/${r.id}`, body)
+    ElMessage.success('评价已保存')
+    // 刷新评价列表与我的状态
+    loadReviews(props.animeId)
+    api.get(`/api/v1/animes/${props.animeId}`).then((d) => { detail.value = d }).catch(() => {})
+  } finally { savingReview.value = false }
+}
 
 async function track () {
   if (!detail.value) return
@@ -135,4 +197,16 @@ async function track () {
   overflow: hidden;
 }
 .expand { margin-top: 4px; padding-left: 0; }
+
+/* 评价区 */
+.my-review { margin-bottom: 12px; }
+.review-ops { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.review-hint { font-size: 12px; color: var(--text-3); margin-bottom: 10px; }
+.review-empty { font-size: 13px; color: var(--text-3); padding: 6px 0; }
+.review-item { padding: 10px 0; border-top: 1px dashed var(--line); }
+.rv-head { display: flex; align-items: center; gap: 10px; }
+.rv-name { font-size: 13px; color: var(--text-1); }
+.rv-rating { font-size: 12px; color: var(--brand); font-weight: 600; }
+.rv-time { font-size: 12px; color: var(--text-3); margin-left: auto; }
+.rv-text { margin: 6px 0 0; font-size: 13px; line-height: 1.7; color: var(--text-2); }
 </style>

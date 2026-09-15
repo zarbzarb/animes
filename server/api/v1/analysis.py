@@ -32,6 +32,41 @@ async def interest_radar(
     return Enveloped(data=data | {"meta": meta})
 
 
+@router.get("/profile-summary", summary="画像与观看习惯汇总（兴趣分析页用）",
+            dependencies=[Depends(rate_limit("analysis"))])
+async def profile_summary(user: dict = Depends(current_user)) :
+    """一次拉齐兴趣分析页的"概览"数据：A1 画像 + 状态/评分分布 + 观看节奏。
+
+    分布类数据直接从 watch_record 聚合（单用户记录量小，不值得加 SQL）；
+    画像走 A1 落库结果（与推荐同源，保证"分析页看到的 = 推荐用的"）。
+    """
+    gw = get_gw()
+    uid = int(user["id"])
+    profile = gw.get_profile(uid) or {}
+
+    rows = gw.get_watch_records(uid) or []
+    status_names = {0: "想看", 1: "在看", 2: "已看", 3: "弃番"}
+    status_dist = {v: 0 for v in status_names.values()}
+    rating_dist = {i: 0 for i in range(1, 11)}
+    months: dict[str, int] = {}
+    for r in rows:
+        status_dist[status_names.get(int(r.get("status") or 0), "想看")] += 1
+        rt = r.get("rating")
+        if rt and 1 <= int(rt) <= 10:
+            rating_dist[int(rt)] += 1
+        wa = r.get("watched_at") or ""
+        if len(wa) >= 7:
+            months[wa[:7]] = months.get(wa[:7], 0) + 1
+
+    return Enveloped(data={
+        "profile": profile,
+        "status_dist": status_dist,
+        "rating_dist": [{"rating": k, "count": v} for k, v in sorted(rating_dist.items())],
+        "monthly_counts": [{"period": k, "count": v}
+                           for k, v in sorted(months.items())[-12:]],
+    })
+
+
 async def _drift(user_id: int, granularity: str) -> tuple[dict, dict]:
     if granularity not in ("month", "quarter", "year"):
         raise invalid_param("granularity 必须是 month / quarter / year")

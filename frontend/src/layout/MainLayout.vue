@@ -79,5 +79,6 @@ async function onCmd (cmd) {
 .menu-group { font-size: 12px; color: #c0c4cc; padding: 14px 20px 4px; }
 .header { background: #fff; border-bottom: 1px solid #ebeef5; display: flex; align-items: center; justify-content: space-between; }
 .who { cursor: pointer; color: #606266; display: flex; align-items: center; gap: 6px; }
+.ava { background: var(--brand); flex-shrink: 0; }
 .main { background: #f5f6fa; overflow-y: auto; }
 </style>

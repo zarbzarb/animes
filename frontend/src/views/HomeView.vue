@@ -68,6 +68,19 @@ async function load (force = false) {
   } finally { busy.value = false }
 }
 
+// 切到"分类推荐"时 genreId 还是 null，直接 load 会被 axios 丢参 → 后端
+// 422 "query.genre_id Field required"。必须等题材列表回来先选好默认值。
+async function onModeChange () {
+  if (mode.value === 'genre') {
+    if (!genres.value.length) {
+      genres.value = (await api.get('/api/v1/genres'))?.list || []
+    }
+    if (!genreId.value && genres.value.length) genreId.value = genres.value[0].genre_id
+    if (!genreId.value) return
+  }
+  load()
+}
+
 async function onTrack (it) {
   await api.post('/api/v1/records', { anime_id: it.anime_id, status: 1 })
   ElMessage.success(`已加入追番：${it.title}`)
@@ -78,8 +91,7 @@ const detailId = ref(null)
 const showDetail = (id) => { detailId.value = id; detailOpen.value = true }
 const goSimilar = (id) => router.push({ name: 'new', query: { similar_to: id } })
 
-onMounted(async () => {
-  genres.value = (await api.get('/api/v1/genres'))?.list || []
+onMounted(() => {
   load()
 })
 </script>

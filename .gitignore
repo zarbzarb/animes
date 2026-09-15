@@ -80,3 +80,4 @@ desktop.ini
 
 # ===== Agent 工作区（工具本地数据，非项目交付物）=====
 .workbuddy/
+data/raw_cn/bgmd_full.json

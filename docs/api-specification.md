@@ -105,6 +105,8 @@ Authorization: Bearer <access_token>
 | 28 | 分析 | GET | `/analysis/drift-trend` | ✅ | 题材漂移趋势 |
 | 29 | 分析 | GET | `/analysis/drift-points` | ✅ | 漂移点标注 |
 | 30 | 分析 | POST | `/analysis/agent-invoke` | ✅ | 直接调 Agent（调试用） |
+| 30b | 分析 | GET | `/analysis/profile-summary` | ✅ | 画像/状态/评分分布/月度节奏汇总 |
+| 30c | 用户 | POST | `/users/me/avatar` | ✅ | 头像上传（jpg/png/webp/gif ≤2MB） |
 | 31 | 管理 | GET | `/admin/animes` | 🔒 | 动漫管理列表 |
 | 32 | 管理 | POST | `/admin/animes` | 🔒 | 新增动漫 |
 | 33 | 管理 | PUT | `/admin/animes/{id}` | 🔒 | 编辑动漫 |
@@ -596,6 +598,44 @@ data: {"type":"done","session_id":"sess_9a8b7c","tool_calls":2,"tokens_used":412
 ```
 
 **响应**：透传该 Agent 的 `RecallOutput` + `meta.elapsed_ms`。
+
+#### `GET /analysis/profile-summary`
+
+兴趣分析页"概览区"的一次性数据源：A1 画像（与推荐同源）+ watch_record 聚合分布。
+
+**响应**（节选）
+
+```jsonc
+{
+  "data": {
+    "profile": { "top_genres": [...], "activity_label": "high", "watch_intensity": 3.1,
+                 "avg_rating_tendency": 7.8, "dropped_rate": 0.05, "total_records": 57,
+                 "user_tag": "热血党", "summary_text": "..." },
+    "status_dist": { "想看": 0, "在看": 2, "已看": 55, "弃番": 1 },
+    "rating_dist": [ { "rating": 1, "count": 0 }, ... { "rating": 10, "count": 3 } ],
+    "monthly_counts": [ { "period": "2025-10", "count": 6 }, ... ]   // 近 12 月
+  }
+}
+```
+
+#### `GET /animes/{anime_id}/reviews`
+
+本站文字评价列表（匿名可浏览，与 `/similar` 同级公开）。按 `updated_at` 倒序，
+只收录 `review` 非空的记录；昵称+头像级别匿名化，不暴露 user_id。
+
+**响应**（节选）：`data.list[] = { nickname, avatar_url, rating, status, review, updated_at }`
+
+**写入**：复用 `PUT /records/{id}` —— `RecordPatch` 新增 `review` 字段（≤500 字，
+空串 = 清除），与 `rating`（1-10）并列、可只填其一。
+
+#### `POST /users/me/avatar`
+
+multipart 表单上传（字段名 `file`），支持 jpg/png/webp/gif，≤2MB。
+落盘 `data/uploads/`，经 `/static/uploads/` 托管，返回相对路径并写入 `user.avatar_url`。
+
+```jsonc
+{ "code": 0, "message": "已上传", "data": { "avatar_url": "/static/uploads/avatar_1_tr_xxxx.png" } }
+```
 
 ---
 

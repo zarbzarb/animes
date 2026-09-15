@@ -115,8 +115,15 @@ async function add () {
 }
 
 async function setRating (row, v) {
-  await api.put(`/api/v1/records/${row.id}`, { rating: v || 0 })
+  if (!v) return // el-rate 已禁用 clearable，防御性兜底（后端 rating ge=1，0 会 422）
+  await api.put(`/api/v1/records/${row.id}`, { rating: v })
   ElMessage.success('已评分'); load()
+}
+
+const STATUS = { 0: '想看', 1: '在看', 2: '已看', 3: '弃番' }
+async function setStatus (row, s) {
+  await api.put(`/api/v1/records/${row.id}`, { status: s })
+  ElMessage.success(`状态已改为「${STATUS[s]}」`); load()
 }
 
 async function del (row) {
@@ -134,4 +141,5 @@ onMounted(load)
 .pager { margin-top: 14px; justify-content: flex-end; }
 .w100 { width: 100%; }
 .brief-btn { padding: 0; margin-left: 8px; }
+.status-tag { cursor: pointer; }
 </style>

@@ -48,7 +48,7 @@ import AnimeDetailDialog from '../components/AnimeDetailDialog.vue'
 
 const keyword = ref(''); const genreId = ref(null); const orderBy = ref('n_interactions')
 const coldOnly = ref(false)
-const rows = ref([]); const total = ref(0); const page = ref(1); const size = 24
+const rows = ref([]); const total = ref(0); const page = ref(1); const size = 30
 const genres = ref([]); const busy = ref(false)
 const detailOpen = ref(false); const detailId = ref(null)
 const openDetail = (a) => { detailId.value = a.src_anime_id ?? a.id; detailOpen.value = true }
