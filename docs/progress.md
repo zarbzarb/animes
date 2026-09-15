@@ -441,6 +441,21 @@ vs 纯内容 0.1368 —— **5:5 并不更好**。
 concat +0.0531、SASRec+add +0.0350、多兴趣+add +0.0451 —— 三者都显著为正，
 **内容通路确实被用上了**。
 
+**dev 档 30 epoch 复核（2026-09-15，四组齐）**：
+
+| 配置（dev, seed 42, 30 epoch） | best ndcg@10 |
+|---|---|
+| base（多兴趣纯行为） | 0.78492 |
+| **mi_add** | **0.79243**（@e30，+0.75pp vs mi_base） |
+| SASRec base | 0.79854 |
+
+* mi_add 优于 mi_base（+0.75pp），方向与 debug 档一致；但仍低于 SASRec base（−0.61pp）。
+* **同权重内容消融复评**（`eval_content_fusion.py --ckpt mi_add_dev --scale dev`，
+  `logs/content_fusion_eval.json`）：val 最优 w_content=0.20（ndcg@10 0.7876），
+  test 上 w=0.2 0.7717 vs w=0（纯行为）0.7712 —— **+0.05pp，方向为正但幅度小**。
+  ⚠️ 复评 val（0.7876）与训练日志 val（0.7924）存在 0.5pp 口径差
+  （疑似训练时评估含内容通路、复评按 ContentFusedModel 装配的差异），**待查后再锁结论**。
+
 **三条结论**：
 
 1. **concat 的问题在实现方式，不在内容**：训练后融合表与原嵌入余弦仅 0.0097，
