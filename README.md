@@ -185,6 +185,57 @@ python scripts/run_experiments.py --config configs/experiment.yaml --all
 python scripts/plot_results.py --exp-dir experiments/2026xxxx
 ```
 
+### 4.4 生产部署
+
+开发环境是「后端 8000 + Vite dev server 5173」双进程；生产把前端构建成静态文件，由 FastAPI 直接托管 —— **单进程、单端口，天然同源，无需 CORS**。
+
+```bash
+# 1) 构建前端产物（输出到 frontend/dist/）
+cd frontend && npm ci && npm run build && cd ..
+
+# 2) 生产配置（.env 关键项，全部必须改默认值）
+#    APP_ENV=prod
+#    JWT_SECRET=<随机长串>            # 登录令牌签名
+#    INTERNAL_TOKEN=<另一个随机长串>   # Agent 内网接口令牌
+#    AUTH_CAPTCHA_STRICT=true          # 登录验证码强制（详见 §4.5）
+#    MYSQL_* / REDIS_*                 # 指向生产实例；CACHE_ENABLED=true 启用 Redis 缓存
+
+# 3) 初始化生产库并启动
+python scripts/init_db.py
+python scripts/import_anime_meta.py
+uvicorn server.main:app --host 0.0.0.0 --port 8000 --workers 2
+```
+
+> 服务启动时若检测到 `frontend/dist/` 存在，会自动挂载为站点根目录（`/`），
+> 并把未匹配的路径回退到 `index.html`（前端路由刷新不 404）。
+> `dist/` 不存在时仍回退到演示页 `web/index.html`，不影响启动。
+>
+> ⚠️ 模型预热在服务启动时进行（加载 checkpoint 到显存/内存），因此
+> **多 worker 部署时每个 worker 都会占一份模型内存**；显存紧张就用
+> `--workers 1` + 前置 nginx 做并发。
+
+验证部署成功：
+
+```bash
+curl http://127.0.0.1:8000/api/v1/health          # {"code":0,...}
+curl -I http://127.0.0.1:8000/                    # 200，返回前端页面
+curl -I http://127.0.0.1:8000/login               # 200（SPA 深层路由回退）
+```
+
+### 4.5 安全配置说明
+
+| 配置项 | 默认 | 生产建议 | 说明 |
+|---|---|---|---|
+| `JWT_SECRET` | `change-me-in-production` | **必须改**为随机长串 | 登录令牌签名密钥，泄露 = 全站账号可伪造 |
+| `INTERNAL_TOKEN` | `internal-dev-token` | **必须改** | `/internal/agents/*` 内网接口令牌，与 JWT 密钥分开管理 |
+| `AUTH_CAPTCHA_STRICT` | `false` | `true` | `true` 后登录**必须**带验证码；默认宽松是为了冒烟/CI 不必读图，生产务必开启 |
+| `MYSQL_PASSWORD` / `REDIS_PASSWORD` | 空 | 强密码 | 缓存关掉（`CACHE_ENABLED=false`）系统也能跑，但推荐缓存全失效 |
+| `CORS` | — | 无需配置 | 前端由同一服务托管（§4.4），天然同源；若仍前后端分离部署才需要加白名单 |
+
+验证码实现见 `server/core/captcha.py`：纯 Python 生成扭曲 SVG（零依赖）、一次一密（先删后比，防重放）、5 分钟过期、大小写不敏感。
+
+---
+
 ---
 
 ## 五、目录结构

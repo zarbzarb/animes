@@ -1,5 +1,8 @@
 <template>
   <el-card shadow="never" class="card">
+    <div class="body">
+      <CoverImage :src="cover" :title="title" w="76px" h="104px" class="cover" />
+      <div class="main">
     <div class="head">
       <div class="title-row">
         <span class="rank">#{{ rank }}</span>
@@ -25,11 +28,14 @@
       <el-button size="small" @click="$emit('similar', animeId)">相似推荐</el-button>
       <el-button size="small" type="primary" plain @click="$emit('track', { anime_id: animeId, title })">加入追番</el-button>
     </div>
+      </div>
+    </div>
   </el-card>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+import CoverImage from './CoverImage.vue'
 
 /**
  * 兼容两种 item 形状：
@@ -46,6 +52,7 @@ const type = computed(() => a.value.type || props.it.type || '')
 const year = computed(() => a.value.year || props.it.year || '')
 const score = computed(() => a.value.score ?? props.it.score ?? null)
 const animeId = computed(() => a.value.src_anime_id ?? a.value.id ?? props.it.anime_id ?? null)
+const cover = computed(() => a.value.image_url || props.it.image_url || '')
 const reason = computed(() => props.it.explain?.reason || props.it.reason || '')
 
 const genreList = computed(() => {
@@ -59,6 +66,8 @@ const pct = (v) => `${Math.max(0, Math.min(1, Number(v) || 0)) * 100}%`
 
 <style scoped>
 .card { margin-bottom: 12px; }
+.body { display: flex; gap: 12px; }
+.main { flex: 1; min-width: 0; }
 .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rank { color: var(--brand); font-weight: 700; }

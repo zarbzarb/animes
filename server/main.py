@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 
 from server.api.v1 import api_v1_router
 from server.core.config import PROJECT_ROOT, settings
-from server.core.exceptions import register_exception_handlers
+from server.core.exceptions import not_found, register_exception_handlers
 from server.core.logging import setup_logging
 from server.core.response import EnvelopeRoute, mark_request_start, new_trace_id
 from server.core.logging import set_trace_id
@@ -38,6 +38,9 @@ from server.core.logging import set_trace_id
 logger = logging.getLogger(__name__)
 
 WEB_DIR = PROJECT_ROOT / "web"
+# 生产前端的构建产物（`cd frontend && npm run build`）。
+# 存在时优先托管它，`web/index.html` 退为无构建环境下的演示页。
+DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -106,18 +109,48 @@ async def trace_middleware(request, call_next):
 app.include_router(api_v1_router)
 
 
-@app.get("/", include_in_schema=False)
-async def index():
-    """演示页面。找不到时返回一段说明而不是 404（避免"服务起来了但页面白屏"）。"""
-    page = WEB_DIR / "index.html"
-    if page.exists():
-        return FileResponse(str(page))
+def _spa_entry() -> FileResponse | JSONResponse:
+    """首页/SPA 回退共用的入口选择：正式前端 → 演示页 → JSON 提示。"""
+    for page in (DIST_DIR / "index.html", WEB_DIR / "index.html"):
+        if page.exists():
+            return FileResponse(str(page))
     return JSONResponse({
         "name": "AniRec API",
         "docs": "/docs",
         "health": "/api/v1/health",
-        "hint": "演示页面 web/index.html 不存在；接口可直接用 /docs 调试",
+        "hint": "前端页面不存在（frontend/dist 与 web/ 均为空）；接口可直接用 /docs 调试",
     })
+
+
+@app.get("/", include_in_schema=False)
+async def index():
+    """站点首页：优先正式前端（dist），否则演示页。"""
+    return _spa_entry()
+
+
+# 前端构建产物挂载。⚠️ 静态目录挂在 catch-all（spa_fallback）**之前**更稳：
+# 即使顺序反了，catch-all 里的文件直供逻辑也能兜住（变异检验确认过两种
+# 顺序行为一致），但 mount 在前可以让 /assets/* 少走一层 Python 分发。
+# check_dir=False 的理由见下方 /static 注释（import 时目录可以尚不存在）。
+app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets"), check_dir=False),
+          name="assets")
+
+
+# SPA 路由回退（catch-all 必须是**最后一个**注册的 GET 路由 —— FastAPI 按
+# 注册顺序匹配，前面的 API/文档路由优先命中）。作用：浏览器刷新 /login、
+# /interest 这类前端深层路由时不 404，统一回落到 index.html。
+# ⚠️ `/api/*`、`/docs`、`/openapi.json`、`/static/*` 未匹配到的路径**必须
+# 重新抛信封 404**，不能回退成 index.html —— 否则 API 的"路径不存在"
+# 会变成 200 + 一页 HTML，前端拦截器和测试都难以察觉。
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    if full_path.startswith(("api/", "docs", "openapi.json", "redoc", "static/")):
+        raise not_found(f"路径 /{full_path} 不存在")
+    # dist 里真实存在的文件（favicon 等）直接给，其余一律回 SPA 入口
+    candidate = (DIST_DIR / full_path).resolve()
+    if candidate.is_file() and str(candidate).startswith(str(DIST_DIR.resolve())):
+        return FileResponse(str(candidate))
+    return _spa_entry()
 
 
 # 静态资源挂载。

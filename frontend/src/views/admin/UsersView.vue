@@ -15,7 +15,9 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="created_at" label="注册时间" width="170" />
+      <el-table-column prop="last_login_at" label="最近登录" width="170">
+        <template #default="{ row }">{{ row.last_login_at || '从未登录' }}</template>
+      </el-table-column>
     </el-table>
     <el-pagination class="pager" layout="prev, pager, next, total" :total="total"
       :page-size="size" v-model:current-page="page" @current-change="load" />

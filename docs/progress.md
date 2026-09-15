@@ -1,6 +1,6 @@
 # 项目进度总览 · AniRec
 
-> **快照时间**：2026-09-14 22:05 ｜ **最新完成**：**登录体验重构（左右分栏 + 分段切换 + 服务端 SVG 验证码 + 注册二次确认 + 修复"密码错误无提示"）** ｜ **下一里程碑**：前端细节联调与部署说明 ｜ **进行中**：阶段 2 与阶段 3 **并行**（GPU 空档跑实验，人工时间推 M3）
+> **快照时间**：2026-09-15 11:50 ｜ **最新完成**：**M3.7 收尾 —— 生产部署（dist 由 FastAPI 托管 + SPA 回退 + 安全配置文档）、前端细节打磨（封面图降级 CoverImage、监控/用户管理页字段核对修正）** ｜ **下一里程碑**：mi_add 出数后 §2.2 消融复评锁口径 ｜ **进行中**：阶段 2 与阶段 3 **并行**（GPU 空档跑实验，人工时间推 M3）
 >
 > 🔀 **2026-09-14 决策 D6：阶段 2 与阶段 3 并行推进。**
 > 阶段 2 剩余实验需 ≈ 42 h GPU（1.8 天）且**不占用人力**，而阶段 3（全栈系统）**不依赖 GPU**。
@@ -652,7 +652,26 @@ M3 系统开发。待办队列见 [gpu-queue.md](gpu-queue.md)（防遗忘的唯
 （实测踩过）；端点枚举一律改走公开稳定的 `app.openapi()["paths"]`。
 "子路由必须 `make_router`"的规则经实验复核仍然成立，规则不变、机制解释更新。
 
-**待办**：前端细节打磨（封面图加载失败降级、效果监控指标图与 `metric_snapshot` 实际形状核对）；部署说明（README 部署段：uvicorn + `npm run build` 产物挂载或双进程）；阶段 2 剩余 GPU 实验按 [gpu-queue.md](gpu-queue.md) 补跑。
+**待办**：阶段 2 剩余 GPU 实验按 [gpu-queue.md](gpu-queue.md) 补跑（mi_add 重跑中）。
+
+**2026-09-15 上午·M3.7 收尾（部署 + 前端打磨）**：
+
+1. **生产部署**：`main.py` 新增 `frontend/dist` 托管 —— `/` 与 SPA 深层路由
+   （/login 等）回 `index.html`，`/assets/*` 由 StaticFiles 挂载，`/api/*`
+   未匹配路径**保持信封 404**（不回退 HTML）；dist 缺席回退演示页。
+   README §4.4/4.5 部署与安全配置文档；`.env.example` 补
+   `INTERNAL_TOKEN` / `AUTH_CAPTCHA_STRICT`。新增 `tests/test_api/test_spa.py`
+   （4 例）锁语义。⚠️ 两个坑：mount/catch-all 注册顺序（两者行为经变异检验
+   一致，文件直供逻辑兜底）；`catch-all` 里排除清单若含 `assets/` 会让
+   mount 永远轮不到（首版 404 的真正根因）。
+2. **前端打磨**：新增 `CoverImage.vue`（MAL CDN 国内易挂 —— 渐变占位 +
+   稳定哈希选色，同番同长相）；AnimeCard 改横排封面布局、RecordsView 加
+   封面列（顺带修掉 `prop="title"` 读不到嵌套 anime.title 的静默空列）；
+   **MonitorView 字段全错重写**（Agent 表 `agent/state/n_calls` →
+   `agent_id/status_label/calls` 等；指标图假设 `{name,points}` 嵌套 →
+   真实是按行平铺快照，改按 model_ver 分组画线、空数据显示 note 而非空白图）；
+   UsersView `created_at` → `last_login_at`。
+3. 单测 **837 例全绿**；冒烟 43/43；分层 R1–R5 干净。
 **演示账号**：`anifan / P@ssw0rd`（5 个演示用户见 `scripts/init_db.py` DEMO_USERS，密码统一 `P@ssw0rd`）。前端 `cd frontend && npm run dev` → `http://localhost:5173`；API 文档 `http://127.0.0.1:8000/docs`。
 
 **2026-09-14 晚·登录体验重构（用户反馈四连）**：

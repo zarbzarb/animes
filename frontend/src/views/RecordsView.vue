@@ -16,7 +16,16 @@
     </div>
 
     <el-table :data="rows" v-loading="busy" stripe>
-      <el-table-column prop="title" label="番剧" min-width="220" show-overflow-tooltip />
+      <el-table-column label="封面" width="76">
+        <template #default="{ row }">
+          <CoverImage :src="row.anime?.image_url" :title="row.anime?.title || row.title" w="48px" h="64px" />
+        </template>
+      </el-table-column>
+      <el-table-column label="番剧" min-width="220" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.anime?.title || row.title }}
+        </template>
+      </el-table-column>
       <el-table-column prop="status_label" label="状态" width="90">
         <template #default="{ row }">
           <el-tag size="small" :type="['info','primary','success','danger'][row.status] || 'info'">
@@ -61,6 +70,7 @@ import { onMounted, ref } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import CoverImage from '../components/CoverImage.vue'
 
 const rows = ref([]); const total = ref(0); const page = ref(1); const size = 20
 const status = ref(null); const busy = ref(false); const stats = ref({})
