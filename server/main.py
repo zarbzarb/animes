@@ -137,23 +137,19 @@ async def index():
 app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets"), check_dir=False),
           name="assets")
 
-
-# SPA 路由回退（catch-all 必须是**最后一个**注册的 GET 路由 —— FastAPI 按
-# 注册顺序匹配，前面的 API/文档路由优先命中）。作用：浏览器刷新 /login、
-# /interest 这类前端深层路由时不 404，统一回落到 index.html。
-# ⚠️ `/api/*`、`/docs`、`/openapi.json`、`/static/*` 未匹配到的路径**必须
-# 重新抛信封 404**，不能回退成 index.html —— 否则 API 的"路径不存在"
-# 会变成 200 + 一页 HTML，前端拦截器和测试都难以察觉。
-@app.get("/{full_path:path}", include_in_schema=False)
-async def spa_fallback(full_path: str):
-    if full_path.startswith(("api/", "docs", "openapi.json", "redoc", "static/")):
-        raise not_found(f"路径 /{full_path} 不存在")
-    # dist 里真实存在的文件（favicon 等）直接给，其余一律回 SPA 入口
-    candidate = (DIST_DIR / full_path).resolve()
-    if candidate.is_file() and str(candidate).startswith(str(DIST_DIR.resolve())):
-        return FileResponse(str(candidate))
-    return _spa_entry()
-
+# 用户上传（头像等）。⚠️ 两个顺序约束，缺一不可：
+# ① 在 `/static` 之前 —— Starlette mount 按注册顺序匹配，`/static` 先挂
+#    会把 `/static/uploads/*` 全部吃掉（其目录是 web/，里面没有 uploads/
+#    → 404），头像上传成功但永远显示不出来。
+# ② 在 spa_fallback catch-all 之前 —— `@app.get("/{full_path:path}")` 会
+#    先于其后注册的所有 mount 命中，而它对 static/ 前缀直接抛信封 404，
+#    所以挂在这之后的静态目录等于没挂（/static 曾因此整段 404 过）。
+# 🔴 历史教训：uploads 这行曾在并行编辑中被同文件的后续 Edit 静默覆盖
+# 丢失，而当时在跑的旧进程恰好加载过丢失前的代码，端到端验证全是假
+# 阳性；进程一重启（PyCharm 启动 = 全新加载）就 404。回归测试见
+# tests/test_api/test_static_mounts.py
+app.mount("/static/uploads", StaticFiles(directory=str(UPLOAD_DIR), check_dir=False),
+          name="uploads")
 
 # 静态资源挂载。
 # ⚠️ 之前写成 `if WEB_DIR.exists(): app.mount(...)` —— mount 发生在 **import 时**，
@@ -165,4 +161,26 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR), check_dir=False),
           name="static")
 
 
+# SPA 路由回退（catch-all 必须是**最后一个**注册的 GET 路由 —— FastAPI 按
+# 注册顺序匹配，前面的 API/文档路由/静态挂载优先命中）。作用：浏览器刷新
+# /login、/interest 这类前端深层路由时不 404，统一回落到 index.html。
+# ⚠️ `/api/*`、`/docs`、`/openapi.json`、`/static/*` 未被前面的路由/挂载
+# 命中的路径**必须重新抛信封 404**，不能回退成 index.html —— 否则 API 的
+# "路径不存在"会变成 200 + 一页 HTML，前端拦截器和测试都难以察觉。
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    if full_path.startswith(("api/", "docs", "openapi.json", "redoc", "static/")):
+        raise not_found(f"路径 /{full_path} 不存在")
+    # dist 里真实存在的文件（favicon 等）直接给，其余一律回 SPA 入口
+    candidate = (DIST_DIR / full_path).resolve()
+    if candidate.is_file() and str(candidate).startswith(str(DIST_DIR.resolve())):
+        return FileResponse(str(candidate))
+    return _spa_entry()
+
+
 __all__ = ["app"]
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
