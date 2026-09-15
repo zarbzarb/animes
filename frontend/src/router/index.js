@@ -9,6 +9,7 @@ const routes = [
     children: [
       { path: '', redirect: '/home' },
       { path: 'home', name: 'home', component: () => import('../views/HomeView.vue'), meta: { title: '首页推荐' } },
+      { path: 'library', name: 'library', component: () => import('../views/AnimeListView.vue'), meta: { title: '番剧库' } },
       { path: 'records', name: 'records', component: () => import('../views/RecordsView.vue'), meta: { title: '我的追番' } },
       { path: 'new', name: 'new', component: () => import('../views/NewAnimeView.vue'), meta: { title: '新番专区' } },
       { path: 'interest', name: 'interest', component: () => import('../views/InterestView.vue'), meta: { title: '兴趣分析' } },

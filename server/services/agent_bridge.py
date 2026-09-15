@@ -117,6 +117,7 @@ def shape_items(items: Sequence[dict], *, explain_from_item: bool = True) -> lis
             "id": (m or {}).get("id"),
             "src_anime_id": src,
             "title": (m or {}).get("title") or it.get("title"),
+            "title_cn": (m or {}).get("title_cn"),
             "type": (m or {}).get("type"),
             "year": (m or {}).get("year") if m else it.get("year"),
             "score": (m or {}).get("score"),
@@ -150,6 +151,8 @@ def _meta_of(a0_result: dict, cache_hit: bool = False) -> dict:
         # （A4 的推荐结果缓存）。业务关心后者；早期只读前者，而 A0 从不设置它，
         # 于是这个契约字段对客户端恒为 false（"从来没命中过缓存"）。
         "cache_hit": bool(cache_hit or res.get("cache_hit")),
+        # A4 走了 L4 全站热门兜底（新注册零记录用户）→ 前端显示"热门推荐"横幅
+        "used_fallback": bool(res.get("used_fallback")),
         "profile_version": a0_result.get("profile_version"),
         "agent_chain": [c.get("agent") for c in (a0_result.get("agent_chain") or [])]
                        or list(a0_result.get("lane") or []),

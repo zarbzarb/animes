@@ -61,6 +61,7 @@ async def anime_detail(anime_id: int,
         "id": a["id"],
         "src_anime_id": a["src_anime_id"],
         "title": a["title"],
+        "title_cn": a.get("title_cn"),
         "alt_title": a.get("alt_title"),
         "type": a.get("type"),
         "year": a.get("year"),
@@ -69,6 +70,7 @@ async def anime_detail(anime_id: int,
         "image_url": a.get("image_url"),
         "mal_url": a.get("mal_url"),
         "summary": a.get("summary"),
+        "summary_cn": a.get("summary_cn"),
         "genres": [{"genre_id": gid, "genre": name} for gid, name
                    in zip(a.get("genres") or [], a.get("genre_names") or [])],
         "n_interactions": a.get("n_interactions"),
@@ -76,6 +78,11 @@ async def anime_detail(anime_id: int,
     }
     if user:
         data["my_record"] = _my_record(int(user["id"]), int(anime_id))
+    # 本站用户评分（与 MAL 的 anime.score 并列展示；无评分则省略）。
+    # a["id"] 是 anime 内部主键，watch_record.anime_id 即外键到它。
+    cr = gw.community_ratings([int(a["id"])]).get(int(a["id"]))
+    if cr:
+        data["community_rating"] = cr
     return Enveloped(data=data)
 
 
@@ -119,6 +126,7 @@ def _brief(a: dict) -> dict:
         "id": a.get("id"),
         "src_anime_id": a.get("src_anime_id"),
         "title": a.get("title"),
+        "title_cn": a.get("title_cn"),
         "type": a.get("type"),
         "year": a.get("year"),
         "score": a.get("score"),

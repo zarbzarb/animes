@@ -238,6 +238,10 @@ class OrchestratorAgent(BaseAgent):
                 # 信封上的默认值 False，于是对外契约里的 `meta.cache_hit`
                 # 结构性地恒为 false：客户端会以为"从来没命中过缓存"。
                 "cache_hit": bool(a4.get("cache_hit")),
+                # 同理：A4 走了 L4 全站热门兜底（`used_fallback`）也只有
+                # A0 能透传 —— 新注册零记录用户必然走这条路，前端要靠它
+                # 显示"热门推荐·加记录后个性化"的横幅。
+                "used_fallback": bool(a4.get("used_fallback")),
             })
         elif it == "EXPLAIN_RECOMMEND":
             result_payload.update({

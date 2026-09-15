@@ -25,10 +25,13 @@ def _feed_envelope(data: dict, meta: dict) :
     """把 `meta.degraded` 体现在 `message` 上：前端据此显示"部分能力降级"。
 
     协议 §6 明确「降级不是错误」：HTTP 仍 200，`code` 仍 0/60401。
+    ⚠️ 降级分支也必须保留 data 的**全部业务字段**（is_cold_start_user /
+    profile_summary / user_tag）—— 新用户必然带 A2 降级标记，第一版这里
+    只回传 {items, meta}，把冷启动信号整个砍没了。
     """
     deg = meta.get("degraded") or []
     if deg:
-        return Enveloped(data={"items": data.get("items") or [], "meta": meta},
+        return Enveloped(data={**data, "meta": meta},
                          code=60401,
                          message=f"部分能力已降级：{'、'.join(str(d) for d in deg)}")
     return Enveloped(data=data | {"meta": meta}, code=0, message="ok")

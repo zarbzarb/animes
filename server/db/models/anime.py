@@ -44,6 +44,10 @@ class Anime(Base, TimestampMixin):
     is_sequel: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     raw_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    # 中文本地化（2026-09-15）：title_cn 由 LLM 批量翻译，summary_cn 只翻头部
+    # 热门番（n_interactions 降序），长尾保持英文 —— 字段可空，前端逐级回退。
+    title_cn: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    summary_cn: Mapped[Optional[str]] = mapped_column(Text, default=None)
     genre_raw: Mapped[Optional[list]] = mapped_column(JSON, default=None)
     genre_detail: Mapped[Optional[list]] = mapped_column(JSON, default=None)
     # 冷启动判定的唯一依据（阈值见 .env 的 COLD_START_THRESHOLD）

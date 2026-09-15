@@ -12,6 +12,7 @@
       </div>
       <el-menu :default-active="$route.path" router class="menu">
         <el-menu-item index="/home"><el-icon><HomeFilled /></el-icon>首页推荐</el-menu-item>
+        <el-menu-item index="/library"><el-icon><Search /></el-icon>番剧库</el-menu-item>
         <el-menu-item index="/records"><el-icon><Collection /></el-icon>我的追番</el-menu-item>
         <el-menu-item index="/new"><el-icon><Sunny /></el-icon>新番专区</el-menu-item>
         <el-menu-item index="/interest"><el-icon><DataAnalysis /></el-icon>兴趣分析</el-menu-item>
@@ -44,7 +45,7 @@
 </template>
 
 <script setup>
-import { HomeFilled, Collection, Sunny, DataAnalysis, ChatDotRound, Film, User, Monitor } from '@element-plus/icons-vue'
+import { HomeFilled, Collection, Sunny, DataAnalysis, ChatDotRound, Film, User, Monitor, Search } from '@element-plus/icons-vue'
 import { auth } from '../stores/auth'
 import { http } from '../api/client'
 import { useRouter } from 'vue-router'

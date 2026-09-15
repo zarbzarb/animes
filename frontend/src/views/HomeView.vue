@@ -1,5 +1,9 @@
 <template>
   <div>
+    <el-alert v-if="coldStart" type="info" :closable="false" class="cold-tip"
+      title="欢迎来到 AniRec！你还没有追番记录"
+      description="当前展示的是全站热门。去「我的追番」添加几部看过的番，或直接评分，推荐会立刻变得个性化。" show-icon />
+
     <el-alert v-if="degraded.length" type="warning" :closable="false" class="degraded"
       :title="`部分能力已降级：${degraded.join('、')}`" show-icon />
 
@@ -39,6 +43,7 @@ const genreId = ref(null)
 const genres = ref([])
 const items = ref([])
 const meta = ref({})
+const coldStart = ref(false)
 const degraded = computed(() => meta.value?.degraded || [])
 
 const metaInfo = computed(() => {
@@ -59,6 +64,7 @@ async function load (force = false) {
       : await api.get('/api/v1/recommend/by-genre', { ...params, genre_id: genreId.value })
     items.value = d.items || []
     meta.value = d.meta || {}
+    coldStart.value = Boolean(d.is_cold_start_user || d.meta?.used_fallback)
   } finally { busy.value = false }
 }
 
@@ -83,4 +89,5 @@ onMounted(async () => {
 .genre-sel { width: 160px; }
 .meta-info { font-size: 12px; color: #909399; }
 .degraded { margin-bottom: 12px; }
+.cold-tip { margin-bottom: 12px; }
 </style>

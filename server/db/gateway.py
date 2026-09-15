@@ -196,6 +196,7 @@ class SqlGateway:
             "src_anime_id": int(a.src_anime_id),
             "id": int(a.id),
             "title": a.title, "alt_title": a.alt_title,
+            "title_cn": a.title_cn, "summary_cn": a.summary_cn,
             "type": a.type, "year": _i(a.year), "season": a.season,
             "score": _f(a.score), "episodes": _i(a.episodes),
             "mal_url": a.mal_url, "image_url": a.image_url,
@@ -220,6 +221,27 @@ class SqlGateway:
             names = self._genre_names(s, gids)
             return self._anime_dict(a, genre_ids=gids, genre_names=names,
                                     threshold=self.cold_start_threshold)
+
+    def community_ratings(self, anime_pks: Sequence[int]) -> dict[int, dict]:
+        """本站用户评分聚合：`{anime.id(内部pk): {avg, count}}`。
+
+        与 `anime.score`（MAL 全网评分）是两个数：这里只统计本站
+        `watch_record.rating`（1-10），前端并列展示"本站评分"。
+        无评分记录的番不在返回 dict 里。
+        """
+        if not anime_pks:
+            return {}
+        with session_scope() as s:
+            rows = s.execute(
+                select(WatchRecord.anime_id,
+                       func.avg(WatchRecord.rating).label("avg_r"),
+                       func.count().label("n"))
+                .where(WatchRecord.anime_id.in_(list(anime_pks)),
+                       WatchRecord.rating.is_not(None),
+                       WatchRecord.rating > 0)
+                .group_by(WatchRecord.anime_id)).all()
+            return {int(r.anime_id): {"avg": round(float(r.avg_r), 2),
+                                      "count": int(r.n)} for r in rows}
 
     @staticmethod
     def _genre_ids_of(s, anime_pks: Sequence[int]) -> dict[int, list[int]]:
@@ -347,8 +369,10 @@ class SqlGateway:
                 stmt = stmt.where(Anime.n_interactions < self.cold_start_threshold)
             if keyword:
                 like = f"%{keyword}%"
+                # title_cn：搜中文通行译名也能命中（bangumi-data 回填）
                 stmt = stmt.where(or_(Anime.title.like(like),
-                                      Anime.alt_title.like(like)))
+                                      Anime.alt_title.like(like),
+                                      Anime.title_cn.like(like)))
             if genre_id is not None:
                 sub = select(AnimeGenre.anime_id).where(
                     AnimeGenre.genre_id == int(genre_id))
@@ -381,8 +405,10 @@ class SqlGateway:
                 stmt = stmt.where(Anime.n_interactions < self.cold_start_threshold)
             if keyword:
                 like = f"%{keyword}%"
+                # title_cn：搜中文通行译名也能命中（bangumi-data 回填）
                 stmt = stmt.where(or_(Anime.title.like(like),
-                                      Anime.alt_title.like(like)))
+                                      Anime.alt_title.like(like),
+                                      Anime.title_cn.like(like)))
             if genre_id is not None:
                 sub = select(AnimeGenre.anime_id).where(
                     AnimeGenre.genre_id == int(genre_id))
@@ -741,6 +767,10 @@ class SqlGateway:
                 "summary_text": p.summary_text, "user_tag": p.user_tag,
                 "version": int(p.version or 0),
                 "computed_at": p.computed_at.isoformat() if p.computed_at else None,
+                # 表里没有这一列，就按口径派生：零记录 = 用户冷启动。
+                # A0 聚合靠它填 `is_cold_start_user`，缺了的话前端永远收不到
+                # "新用户"信号（实测 feed 返回 null）。
+                "is_cold_start": int(p.total_records or 0) <= 0,
             }
 
     def upsert_profile(self, user_id: int, data: dict) -> None:

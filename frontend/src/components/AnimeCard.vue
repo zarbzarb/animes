@@ -6,11 +6,12 @@
     <div class="head">
       <div class="title-row">
         <span class="rank">#{{ rank }}</span>
-        <span class="title">{{ title || '(无标题)' }}</span>
+        <span class="title">{{ titleCn || title || '(无标题)' }}</span>
         <el-tag size="small" effect="plain">{{ type || 'TV' }}</el-tag>
         <span class="meta">{{ year || '' }} <b v-if="score != null">★ {{ score }}</b></span>
         <el-tag v-if="it.is_cold_start" size="small" type="warning" effect="plain">冷启动</el-tag>
       </div>
+      <div v-if="titleCn" class="title-en">{{ title }}</div>
       <div class="genres">
         <el-tag v-for="g in genreList" :key="g" size="small" type="info" effect="plain">{{ g }}</el-tag>
       </div>
@@ -49,6 +50,7 @@ defineEmits(['track', 'similar', 'detail'])
 const a = computed(() => props.it.anime || {})
 const rank = computed(() => props.it.rank ?? props.it.rank_no ?? '—')
 const title = computed(() => a.value.title || props.it.title || '')
+const titleCn = computed(() => a.value.title_cn || props.it.title_cn || '')
 const type = computed(() => a.value.type || props.it.type || '')
 const year = computed(() => a.value.year || props.it.year || '')
 const score = computed(() => a.value.score ?? props.it.score ?? null)
@@ -73,6 +75,7 @@ const pct = (v) => `${Math.max(0, Math.min(1, Number(v) || 0)) * 100}%`
 .title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rank { color: var(--brand); font-weight: 700; }
 .title { font-size: 15px; font-weight: 600; color: #303133; }
+.title-en { font-size: 12px; color: #9499a0; margin-top: 2px; }
 .meta { color: #909399; font-size: 13px; }
 .genres { display: flex; gap: 4px; flex-wrap: wrap; }
 .bars { margin-top: 10px; display: grid; gap: 4px; max-width: 560px; }
